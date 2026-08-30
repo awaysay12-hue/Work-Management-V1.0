@@ -1,0 +1,1049 @@
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import confetti from 'canvas-confetti';
+import {
+  Task,
+  TaskFilterState,
+  DailyStreak,
+  ViewFilterPeriod,
+  UserAccount,
+  UserRole,
+  RolePermissions,
+  ActivityLog,
+} from './types';
+import { getInitialTasks, getInitialStreak } from './utils/initialData';
+import { soundFx } from './utils/sound';
+import { checkDueReminders, triggerTaskAlert } from './utils/notifications';
+import { getTodayDateString } from './utils/khmerDates';
+import {
+  DEFAULT_USERS,
+  DEFAULT_ROLE_PERMISSIONS,
+  INITIAL_ACTIVITY_LOGS,
+  hasPermission,
+  canUserViewTask,
+} from './utils/userPermissions';
+import {
+  supabase,
+  fetchTasksFromSupabase,
+  saveTaskToSupabase,
+  syncAllTasksToSupabase,
+  deleteTaskFromSupabase,
+  fetchStreakFromSupabase,
+  saveStreakToSupabase,
+  dbRowToTask,
+} from './lib/supabase';
+
+import { Sidebar } from './components/Sidebar';
+import { Header } from './components/Header';
+import { DailyProgressCard } from './components/DailyProgressCard';
+import { TaskFilterTabs } from './components/TaskFilterTabs';
+import { TaskList } from './components/TaskList';
+import { RightSidebarWidgets } from './components/RightSidebarWidgets';
+import { TaskModal } from './components/TaskModal';
+import { FocusTimerModal } from './components/FocusTimerModal';
+import { CalendarView } from './components/CalendarView';
+import { ProgressAnalyticsView } from './components/ProgressAnalyticsView';
+import { ReminderAlertBanner } from './components/ReminderAlertBanner';
+import { QuickAddBar } from './components/QuickAddBar';
+import { SupabaseSyncModal } from './components/SupabaseSyncModal';
+import { UserManagementModal } from './components/UserManagementModal';
+import { AuthModal } from './components/AuthModal';
+import { PersonalUserBanner } from './components/PersonalUserBanner';
+import { ProfileModal } from './components/ProfileModal';
+
+const STORAGE_KEYS = {
+  TASKS: 'kh_daily_tasks_data_v1',
+  STREAK: 'kh_daily_streak_data_v1',
+  SOUND: 'kh_daily_sound_enabled_v1',
+  USERS: 'kh_daily_users_data_v1',
+  CURRENT_USER_ID: 'kh_daily_current_user_id_v1',
+  ROLE_PERMISSIONS: 'kh_daily_role_permissions_v1',
+  ACTIVITY_LOGS: 'kh_daily_activity_logs_v1',
+  AUTH_AUTHENTICATED: 'kh_daily_auth_authenticated_v1',
+};
+
+export default function App() {
+  // Load tasks from localStorage or initial
+  const [tasks, setTasks] = useState<Task[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.TASKS);
+      if (saved) return JSON.parse(saved);
+    } catch {
+      // Ignore
+    }
+    return getInitialTasks();
+  });
+
+  // Load streak metrics
+  const [streak, setStreak] = useState<DailyStreak>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.STREAK);
+      if (saved) return JSON.parse(saved);
+    } catch {
+      // Ignore
+    }
+    return getInitialStreak();
+  });
+
+  // User Management & RBAC States
+  const [users, setUsers] = useState<UserAccount[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.USERS);
+      if (saved) return JSON.parse(saved);
+    } catch {
+      // Ignore
+    }
+    return DEFAULT_USERS;
+  });
+
+  const [currentUser, setCurrentUser] = useState<UserAccount>(() => {
+    try {
+      const savedId = localStorage.getItem(STORAGE_KEYS.CURRENT_USER_ID);
+      const savedUsersRaw = localStorage.getItem(STORAGE_KEYS.USERS);
+      const usersList: UserAccount[] = savedUsersRaw ? JSON.parse(savedUsersRaw) : DEFAULT_USERS;
+      if (savedId) {
+        const found = usersList.find((u) => u.id === savedId) || DEFAULT_USERS.find((u) => u.id === savedId);
+        if (found) return found;
+      }
+      if (usersList && usersList.length > 0) return usersList[0];
+    } catch {
+      // Ignore
+    }
+    return DEFAULT_USERS[0]; // Default to Super Admin
+  });
+
+  const [rolePermissions, setRolePermissions] = useState<Record<UserRole, RolePermissions>>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.ROLE_PERMISSIONS);
+      if (saved) return JSON.parse(saved);
+    } catch {
+      // Ignore
+    }
+    return DEFAULT_ROLE_PERMISSIONS;
+  });
+
+  const [activityLogs, setActivityLogs] = useState<ActivityLog[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.ACTIVITY_LOGS);
+      if (saved) {
+        const parsed: ActivityLog[] = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          const seen = new Set<string>();
+          const uniqueLogs: ActivityLog[] = [];
+          parsed.forEach((log, index) => {
+            const safeId =
+              log.id && !seen.has(log.id)
+                ? log.id
+                : `log-${Date.now()}-${index}-${Math.random().toString(36).substring(2, 7)}`;
+            seen.add(safeId);
+            uniqueLogs.push({ ...log, id: safeId });
+          });
+          return uniqueLogs;
+        }
+      }
+    } catch {
+      // Ignore
+    }
+    return INITIAL_ACTIVITY_LOGS;
+  });
+
+  const [isUserManagementOpen, setIsUserManagementOpen] = useState<boolean>(false);
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState<boolean>(false);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.AUTH_AUTHENTICATED);
+      if (saved !== null) return JSON.parse(saved);
+    } catch {
+      // Ignore
+    }
+    return true; // Keep authenticated initially for smooth experience
+  });
+
+  // Supabase Sync States
+  const [supabaseSyncStatus, setSupabaseSyncStatus] = useState<'synced' | 'syncing' | 'error' | 'offline'>('synced');
+  const [supabaseSyncMessage, setSupabaseSyncMessage] = useState<string>('បានភ្ជាប់ជាមួយ Supabase Database រួចរាល់');
+  const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState<boolean>(false);
+
+  // Sound settings
+  const [soundEnabled, setSoundEnabled] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.SOUND);
+      if (saved !== null) return JSON.parse(saved);
+    } catch {
+      // Ignore
+    }
+    return true;
+  });
+
+  // Filter State
+  const [filters, setFilters] = useState<TaskFilterState>({
+    period: 'today',
+    category: 'all',
+    priority: 'all',
+    searchQuery: '',
+    sortBy: 'dueAsc',
+  });
+
+  // Mobile sidebar state
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+
+  // Active reminders to show banner
+  const [activeAlerts, setActiveAlerts] = useState<Task[]>([]);
+
+  // Modals state
+  const [isTaskModalOpen, setIsTaskModalOpen] = useState<boolean>(false);
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
+
+  const [isFocusTimerOpen, setIsFocusTimerOpen] = useState<boolean>(false);
+  const [focusTimerTask, setFocusTimerTask] = useState<Task | null>(null);
+
+  // Persistence for Users & Permissions
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users));
+    } catch {
+      // Ignore
+    }
+  }, [users]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.CURRENT_USER_ID, currentUser.id);
+    } catch {
+      // Ignore
+    }
+  }, [currentUser]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.ROLE_PERMISSIONS, JSON.stringify(rolePermissions));
+    } catch {
+      // Ignore
+    }
+  }, [rolePermissions]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.ACTIVITY_LOGS, JSON.stringify(activityLogs));
+    } catch {
+      // Ignore
+    }
+  }, [activityLogs]);
+
+  // Log activity helper
+  const logActivity = useCallback(
+    (action: ActivityLog['action'], targetTitle: string, details?: string) => {
+      const uniqueSuffix = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+      const newLog: ActivityLog = {
+        id: `log-${uniqueSuffix}`,
+        timestamp: new Date().toISOString(),
+        userId: currentUser.id,
+        userName: currentUser.khmerName,
+        userRole: currentUser.role,
+        action,
+        targetTitle,
+        details,
+      };
+      setActivityLogs((prev) => {
+        const seen = new Set<string>([newLog.id]);
+        const deduped: ActivityLog[] = [newLog];
+        for (const item of prev) {
+          let safeId = item.id;
+          if (seen.has(safeId)) {
+            safeId = `${safeId}-${Math.random().toString(36).substring(2, 6)}`;
+          }
+          seen.add(safeId);
+          deduped.push({ ...item, id: safeId });
+        }
+        return deduped.slice(0, 100);
+      });
+    },
+    [currentUser]
+  );
+
+  // RBAC Permission checks for currently logged in user
+  const canCreateTask = hasPermission(currentUser.role, 'canCreateTask', rolePermissions);
+  const canEditTask = hasPermission(currentUser.role, 'canEditTask', rolePermissions);
+  const canDeleteTask = hasPermission(currentUser.role, 'canDeleteTask', rolePermissions);
+  const canAssignTask = hasPermission(currentUser.role, 'canAssignTask', rolePermissions);
+  const canToggleComplete = hasPermission(currentUser.role, 'canCompleteTask', rolePermissions);
+  const canManageUsers = hasPermission(currentUser.role, 'canManageUsers', rolePermissions);
+  const canExportData = hasPermission(currentUser.role, 'canExportData', rolePermissions);
+  const canImportData = hasPermission(currentUser.role, 'canImportData', rolePermissions);
+  const canSyncCloud = hasPermission(currentUser.role, 'canSyncCloud', rolePermissions);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.AUTH_AUTHENTICATED, JSON.stringify(isAuthenticated));
+    } catch {
+      // Ignore
+    }
+  }, [isAuthenticated]);
+
+  // User management handlers
+  const handleSwitchUser = (user: UserAccount) => {
+    soundFx.playClick();
+    setCurrentUser(user);
+    if (user.role === 'member' || user.role === 'viewer') {
+      setFilters((prev) => ({ ...prev, assigneeFilter: user.id }));
+    }
+    logActivity('update_role', user.khmerName, `បានប្តូរទៅកាន់គណនី៖ ${user.khmerName} (${user.role})`);
+  };
+
+  const handleLoginSuccess = (user: UserAccount) => {
+    soundFx.playTaskCompleteFanfare();
+    setCurrentUser(user);
+    setIsAuthenticated(true);
+    setIsAuthModalOpen(false);
+    if (user.role === 'member' || user.role === 'viewer') {
+      setFilters((prev) => ({ ...prev, assigneeFilter: user.id }));
+    } else {
+      setFilters((prev) => ({ ...prev, assigneeFilter: 'all' }));
+    }
+    logActivity('update_role', user.khmerName, `បានចូលប្រើប្រាស់គណនីជោគជ័យ (${user.role})`);
+  };
+
+  const handleLogout = () => {
+    soundFx.playClick();
+    logActivity('update_role', currentUser.khmerName, 'បានចាកចេញពីគណនី');
+    setIsAuthenticated(false);
+    setIsAuthModalOpen(true);
+  };
+
+  const handleSaveUser = (savedUser: UserAccount) => {
+    soundFx.playClick();
+    setUsers((prev) => {
+      const exists = prev.some((u) => u.id === savedUser.id);
+      if (exists) {
+        logActivity('update_role', savedUser.khmerName, `បានកែប្រែគណនី៖ ${savedUser.khmerName}`);
+        return prev.map((u) => (u.id === savedUser.id ? savedUser : u));
+      }
+      logActivity('add_user', savedUser.khmerName, `បានបង្កើតគណនី៖ ${savedUser.khmerName} (${savedUser.role})`);
+      return [...prev, savedUser];
+    });
+
+    // If updating current user's profile
+    if (savedUser.id === currentUser.id) {
+      setCurrentUser(savedUser);
+    }
+  };
+
+  const handleDeleteUser = (userId: string) => {
+    soundFx.playClick();
+    const userToDelete = users.find((u) => u.id === userId);
+    const updatedUsers = users.filter((u) => u.id !== userId);
+    setUsers(updatedUsers);
+    if (currentUser.id === userId) {
+      if (updatedUsers.length > 0) {
+        setCurrentUser(updatedUsers[0]);
+      } else {
+        setCurrentUser(DEFAULT_USERS[0]);
+      }
+    }
+    logActivity('delete_user', userToDelete?.khmerName || userId, `បានលុបគណនីចេញពីប្រព័ន្ធ`);
+  };
+
+  const handleUpdateRolePermissions = (newPermissions: Record<UserRole, RolePermissions>) => {
+    soundFx.playClick();
+    setRolePermissions(newPermissions);
+    logActivity('update_role', 'RBAC Matrix', 'បានកែសម្រួលម៉ាទ្រីសសិទ្ធិ & វិសាលភាព');
+  };
+
+  // Initial Sync from Supabase
+  useEffect(() => {
+    let isMounted = true;
+
+    async function initSupabaseData() {
+      if (!supabase) return;
+      setSupabaseSyncStatus('syncing');
+      setSupabaseSyncMessage('កំពុងទាញទិន្នន័យពី Supabase...');
+
+      try {
+        const [tasksRes, streakRes] = await Promise.all([
+          fetchTasksFromSupabase(),
+          fetchStreakFromSupabase(),
+        ]);
+
+        if (!isMounted) return;
+
+        if (tasksRes.error) {
+          console.warn('Supabase tasks fetch warning:', tasksRes.error.message);
+          setSupabaseSyncStatus('error');
+          setSupabaseSyncMessage(`មិនទាន់មាន Table tasks ក្នុង Supabase ឬមានបញ្ហា RLS៖ ${tasksRes.error.message}`);
+          return;
+        }
+
+        if (tasksRes.tasks && tasksRes.tasks.length > 0) {
+          setTasks(tasksRes.tasks);
+          setSupabaseSyncStatus('synced');
+          setSupabaseSyncMessage(`ទាញបាន ${tasksRes.tasks.length} ភារកិច្ចពី Supabase ជោគជ័យ`);
+        } else {
+          // If remote is empty, push local initial tasks to Supabase
+          const currentLocalTasks = tasks;
+          if (currentLocalTasks.length > 0) {
+            await syncAllTasksToSupabase(currentLocalTasks);
+          }
+          setSupabaseSyncStatus('synced');
+          setSupabaseSyncMessage('Supabase Database ដំណើរការយ៉ាងល្អ (Synced)');
+        }
+
+        if (streakRes.streak) {
+          setStreak(streakRes.streak);
+        }
+      } catch (err: any) {
+        if (!isMounted) return;
+        setSupabaseSyncStatus('error');
+        setSupabaseSyncMessage(`បរាជ័យក្នុងការ Sync ជាមួយ Database៖ ${err?.message || 'Error'}`);
+      }
+    }
+
+    initSupabaseData();
+
+    // Supabase Real-time listener for tasks
+    let channel: any = null;
+    try {
+      if (supabase) {
+        channel = supabase
+          .channel('public:tasks')
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'tasks' },
+            (payload) => {
+              if (payload.eventType === 'INSERT') {
+                const newTask = dbRowToTask(payload.new);
+                setTasks((prev) => {
+                  if (prev.some((t) => t.id === newTask.id)) return prev;
+                  return [newTask, ...prev];
+                });
+              } else if (payload.eventType === 'UPDATE') {
+                const updatedTask = dbRowToTask(payload.new);
+                setTasks((prev) =>
+                  prev.map((t) => (t.id === updatedTask.id ? updatedTask : t))
+                );
+              } else if (payload.eventType === 'DELETE') {
+                const deletedId = payload.old?.id;
+                if (deletedId) {
+                  setTasks((prev) => prev.filter((t) => t.id !== String(deletedId)));
+                }
+              }
+            }
+          )
+          .subscribe();
+      }
+    } catch (err) {
+      console.warn('Realtime channel error:', err);
+    }
+
+    return () => {
+      isMounted = false;
+      if (channel && supabase) {
+        supabase.removeChannel(channel);
+      }
+    };
+  }, []);
+
+  // Manual Re-sync from Supabase
+  const handleManualSync = async () => {
+    setSupabaseSyncStatus('syncing');
+    setSupabaseSyncMessage('កំពុងផ្ទៀងផ្ទាត់ការតភ្ជាប់ Database...');
+    const { tasks: cloudTasks, error } = await fetchTasksFromSupabase();
+    if (error) {
+      setSupabaseSyncStatus('error');
+      setSupabaseSyncMessage(`បញ្ហា៖ ${error.message}`);
+    } else {
+      if (cloudTasks && cloudTasks.length > 0) {
+        setTasks(cloudTasks);
+      }
+      setSupabaseSyncStatus('synced');
+      setSupabaseSyncMessage('បានធ្វើសមកាលកម្មជាមួយ Supabase ជោគជ័យ! ✅');
+    }
+  };
+
+  // Push local state to Cloud
+  const handlePushLocalToCloud = async () => {
+    setSupabaseSyncStatus('syncing');
+    const { success, error } = await syncAllTasksToSupabase(tasks);
+    if (!success || error) {
+      setSupabaseSyncStatus('error');
+      throw error || new Error('មិនអាចបញ្ជូនទិន្នន័យបាន');
+    }
+    await saveStreakToSupabase(streak);
+    setSupabaseSyncStatus('synced');
+    setSupabaseSyncMessage(`បានបញ្ជូន ${tasks.length} ភារកិច្ចទៅ Supabase រួចរាល់`);
+  };
+
+  // Pull Cloud to local
+  const handlePullCloudToLocal = async () => {
+    setSupabaseSyncStatus('syncing');
+    const { tasks: cloudTasks, error } = await fetchTasksFromSupabase();
+    if (error || !cloudTasks) {
+      setSupabaseSyncStatus('error');
+      throw error || new Error('មិនអាចទាញទិន្នន័យបាន');
+    }
+    setTasks(cloudTasks);
+    const { streak: cloudStreak } = await fetchStreakFromSupabase();
+    if (cloudStreak) setStreak(cloudStreak);
+    setSupabaseSyncStatus('synced');
+    setSupabaseSyncMessage(`បានទាញ ${cloudTasks.length} ភារកិច្ចពី Supabase ជោគជ័យ`);
+  };
+
+  // Sync state to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.TASKS, JSON.stringify(tasks));
+    } catch {
+      // Ignore
+    }
+  }, [tasks]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEYS.STREAK, JSON.stringify(streak));
+    } catch {
+      // Ignore
+    }
+  }, [streak]);
+
+  useEffect(() => {
+    soundFx.soundEnabled = soundEnabled;
+    try {
+      localStorage.setItem(STORAGE_KEYS.SOUND, JSON.stringify(soundEnabled));
+    } catch {
+      // Ignore
+    }
+  }, [soundEnabled]);
+
+  // Periodic Reminder Checker (runs every 15 seconds)
+  useEffect(() => {
+    const runReminderCheck = () => {
+      const triggered = checkDueReminders(tasks);
+      if (triggered.length > 0) {
+        const newTriggeredIds = new Set(triggered.map((t) => t.id));
+        setActiveAlerts((prev) => {
+          const existingIds = new Set(prev.map((t) => t.id));
+          const toAdd = triggered.filter((t) => !existingIds.has(t.id));
+
+          toAdd.forEach((task) => {
+            triggerTaskAlert(task);
+          });
+
+          return [...prev.filter((t) => newTriggeredIds.has(t.id)), ...toAdd];
+        });
+      }
+    };
+
+    runReminderCheck();
+    const interval = setInterval(runReminderCheck, 15000);
+    return () => clearInterval(interval);
+  }, [tasks]);
+
+  // Handle task completion toggle with confetti & streak update
+  const handleToggleComplete = useCallback((task: Task) => {
+    const willBeCompleted = !task.completed;
+    const completedAt = willBeCompleted ? new Date().toISOString() : undefined;
+
+    if (willBeCompleted) {
+      soundFx.playTaskCompleteFanfare();
+      try {
+        confetti({
+          particleCount: 50,
+          spread: 60,
+          origin: { y: 0.7 },
+        });
+      } catch {
+        // Ignore
+      }
+    } else {
+      soundFx.playClick();
+    }
+
+    const updatedTask: Task = {
+      ...task,
+      completed: willBeCompleted,
+      completedAt,
+    };
+
+    setTasks((prev) =>
+      prev.map((t) => (t.id === task.id ? updatedTask : t))
+    );
+
+    // Save to Supabase
+    saveTaskToSupabase(updatedTask).catch((err) =>
+      console.warn('Failed to sync completed task to Supabase:', err)
+    );
+
+    if (willBeCompleted) {
+      setActiveAlerts((prev) => prev.filter((a) => a.id !== task.id));
+      logActivity('complete_task', task.title, 'បានគូសបញ្ចប់កិច្ចការដោយជោគជ័យ');
+    } else {
+      logActivity('uncomplete_task', task.title, 'បានប្តូរស្ថានភាពទៅមិនទាន់រួចរាល់');
+    }
+
+    if (willBeCompleted) {
+      const todayStr = getTodayDateString();
+      setStreak((prev) => {
+        const isNewDay = prev.lastActiveDate !== todayStr;
+        const currentStreak = isNewDay ? prev.currentStreak + 1 : prev.currentStreak;
+        const longestStreak = Math.max(currentStreak, prev.longestStreak);
+
+        const newStreak: DailyStreak = {
+          ...prev,
+          currentStreak,
+          longestStreak,
+          lastActiveDate: todayStr,
+          totalCompletedAllTime: prev.totalCompletedAllTime + 1,
+        };
+
+        saveStreakToSupabase(newStreak).catch((err) =>
+          console.warn('Failed to sync streak to Supabase:', err)
+        );
+
+        return newStreak;
+      });
+    }
+  }, []);
+
+  // Subtask completion toggle
+  const handleToggleSubtask = (taskId: string, subtaskId: string) => {
+    soundFx.playClick();
+    setTasks((prev) =>
+      prev.map((task) => {
+        if (task.id !== taskId) return task;
+        const updatedSubtasks = task.subtasks.map((sub) =>
+          sub.id === subtaskId ? { ...sub, completed: !sub.completed } : sub
+        );
+        const allCompleted =
+          updatedSubtasks.length > 0 && updatedSubtasks.every((s) => s.completed);
+
+        const updatedTask: Task = {
+          ...task,
+          subtasks: updatedSubtasks,
+          completed: allCompleted ? true : task.completed,
+        };
+
+        saveTaskToSupabase(updatedTask).catch((err) =>
+          console.warn('Failed to sync subtask update to Supabase:', err)
+        );
+
+        return updatedTask;
+      })
+    );
+  };
+
+  // Add / Save Task
+  const handleSaveTask = (savedTask: Task) => {
+    soundFx.playClick();
+    setTasks((prev) => {
+      const exists = prev.some((t) => t.id === savedTask.id);
+      if (exists) {
+        logActivity('edit_task', savedTask.title, savedTask.assigneeName ? `ចាត់តាំងឱ្យ៖ ${savedTask.assigneeName}` : undefined);
+        return prev.map((t) => (t.id === savedTask.id ? savedTask : t));
+      }
+      logActivity('create_task', savedTask.title, savedTask.assigneeName ? `ចាត់តាំងឱ្យ៖ ${savedTask.assigneeName}` : undefined);
+      return [savedTask, ...prev];
+    });
+
+    // Persist to Supabase
+    saveTaskToSupabase(savedTask).catch((err) =>
+      console.warn('Failed to save task to Supabase:', err)
+    );
+  };
+
+  // Delete Task
+  const handleDeleteTask = (taskId: string) => {
+    soundFx.playClick();
+    const taskToDelete = tasks.find((t) => t.id === taskId);
+    setTasks((prev) => prev.filter((t) => t.id !== taskId));
+    setActiveAlerts((prev) => prev.filter((a) => a.id !== taskId));
+
+    logActivity('delete_task', taskToDelete?.title || taskId, 'បានលុបកិច្ចការចេញពីបញ្ជី');
+
+    // Delete in Supabase
+    deleteTaskFromSupabase(taskId).catch((err) =>
+      console.warn('Failed to delete task in Supabase:', err)
+    );
+  };
+
+  // Snooze Reminder
+  const handleSnoozeReminder = (taskId: string, minutes: number) => {
+    soundFx.playClick();
+    const snoozeTime = new Date(Date.now() + minutes * 60 * 1000).toISOString();
+    setTasks((prev) =>
+      prev.map((t) => {
+        if (t.id === taskId) {
+          const updated = { ...t, reminderSnoozedUntil: snoozeTime };
+          saveTaskToSupabase(updated).catch(() => {});
+          return updated;
+        }
+        return t;
+      })
+    );
+    setActiveAlerts((prev) => prev.filter((a) => a.id !== taskId));
+  };
+
+  // Dismiss Reminder
+  const handleDismissReminder = (taskId: string) => {
+    soundFx.playClick();
+    setTasks((prev) =>
+      prev.map((t) => {
+        if (t.id === taskId) {
+          const updated = { ...t, reminderTriggered: true };
+          saveTaskToSupabase(updated).catch(() => {});
+          return updated;
+        }
+        return t;
+      })
+    );
+    setActiveAlerts((prev) => prev.filter((a) => a.id !== taskId));
+  };
+
+  // Add Focus Minutes to Task
+  const handleAddFocusMinutes = (taskId: string, minutes: number) => {
+    setTasks((prev) =>
+      prev.map((t) => {
+        if (t.id === taskId) {
+          const updated = { ...t, spentMinutes: (t.spentMinutes || 0) + minutes };
+          saveTaskToSupabase(updated).catch(() => {});
+          return updated;
+        }
+        return t;
+      })
+    );
+    setStreak((prev) => {
+      const updatedStreak = {
+        ...prev,
+        totalFocusMinutesAllTime: prev.totalFocusMinutesAllTime + minutes,
+      };
+      saveStreakToSupabase(updatedStreak).catch(() => {});
+      return updatedStreak;
+    });
+  };
+
+  // Export Data JSON
+  const handleExportData = () => {
+    soundFx.playClick();
+    const exportPayload = {
+      version: '1.0',
+      exportedAt: new Date().toISOString(),
+      tasks,
+      streak,
+    };
+    const blob = new Blob([JSON.stringify(exportPayload, null, 2)], {
+      type: 'application/json',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `daily-tasks-backup-${getTodayDateString()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Import Data JSON
+  const handleImportData = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const data = JSON.parse(e.target?.result as string);
+        if (data.tasks && Array.isArray(data.tasks)) {
+          setTasks(data.tasks);
+          if (data.streak) setStreak(data.streak);
+          soundFx.playTaskCompleteFanfare();
+          // Sync imported data to Supabase
+          await syncAllTasksToSupabase(data.tasks);
+          if (data.streak) await saveStreakToSupabase(data.streak);
+        }
+      } catch {
+        // Parse error
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  // Modals & triggers
+  const handleStartFocusTimer = (task: Task) => {
+    setFocusTimerTask(task);
+    setIsFocusTimerOpen(true);
+  };
+
+  const handleOpenEditTask = (task: Task) => {
+    setEditingTask(task);
+    setIsTaskModalOpen(true);
+  };
+
+  const handleOpenNewTask = () => {
+    setEditingTask(null);
+    setIsTaskModalOpen(true);
+  };
+
+  const handleOpenNewTaskWithDate = (dateStr: string) => {
+    setEditingTask({
+      id: `task-${Date.now()}`,
+      title: '',
+      category: 'work',
+      priority: 'medium',
+      dueDate: dateStr,
+      dueTime: '09:00',
+      reminderTiming: '15m_before',
+      completed: false,
+      createdAt: new Date().toISOString(),
+      subtasks: [],
+      recurring: 'none',
+      tags: [],
+    });
+    setIsTaskModalOpen(true);
+  };
+
+  // Handle navigation from Sidebar
+  const handleSidebarNavigate = (view: ViewFilterPeriod | 'reminders') => {
+    if (view === 'reminders') {
+      setFilters((prev) => ({ ...prev, period: 'overdue' }));
+    } else {
+      setFilters((prev) => ({ ...prev, period: view }));
+    }
+  };
+
+  // Tasks count by user for RBAC stats
+  const tasksCountByUser = useMemo(() => {
+    const counts: Record<string, number> = {};
+    tasks.forEach((t) => {
+      if (t.assigneeId) {
+        counts[t.assigneeId] = (counts[t.assigneeId] || 0) + 1;
+      }
+    });
+    return counts;
+  }, [tasks]);
+
+  // Is regular user (member or viewer) who should only see their own tasks
+  const isRegularUser = currentUser.role === 'member' || currentUser.role === 'viewer';
+
+  // Visible tasks: calculated based on user role, visibility scope (all, department, assigned_only)
+  const visibleTasks = useMemo(() => {
+    return tasks.filter((t) => canUserViewTask(t, currentUser, users, rolePermissions));
+  }, [tasks, currentUser, users, rolePermissions]);
+
+  return (
+    <div className="flex h-screen w-full bg-slate-100 font-sans overflow-hidden antialiased text-slate-900">
+      {/* High Density Dark Indigo Sidebar */}
+      <Sidebar
+        currentView={filters.period}
+        onNavigate={handleSidebarNavigate}
+        streak={streak}
+        tasks={visibleTasks}
+        activeRemindersCount={activeAlerts.length}
+        onOpenNewTask={handleOpenNewTask}
+        soundEnabled={soundEnabled}
+        onToggleSound={() => setSoundEnabled(!soundEnabled)}
+        isOpenMobile={isMobileSidebarOpen}
+        onCloseMobile={() => setIsMobileSidebarOpen(false)}
+        onOpenSupabaseModal={canSyncCloud ? () => setIsSupabaseModalOpen(true) : undefined}
+        supabaseSyncStatus={supabaseSyncStatus}
+        currentUser={currentUser}
+        usersCount={users.length}
+        onOpenUserManagement={canManageUsers ? () => setIsUserManagementOpen(true) : undefined}
+        canCreateTask={canCreateTask}
+        canManageUsers={canManageUsers}
+        canSyncCloud={canSyncCloud}
+        onOpenAuthModal={() => setIsAuthModalOpen(true)}
+        onLogout={handleLogout}
+      />
+
+      {/* Main App Canvas */}
+      <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden bg-slate-100">
+        {/* High Density Top Header */}
+        <Header
+          streak={streak}
+          activeRemindersCount={activeAlerts.length}
+          soundEnabled={soundEnabled}
+          onToggleSound={() => setSoundEnabled(!soundEnabled)}
+          onOpenNewTask={handleOpenNewTask}
+          onToggleMobileSidebar={() => setIsMobileSidebarOpen(true)}
+          tasks={visibleTasks}
+          onOpenSupabaseModal={canSyncCloud ? () => setIsSupabaseModalOpen(true) : undefined}
+          supabaseSyncStatus={supabaseSyncStatus}
+          currentUser={currentUser}
+          users={users}
+          onSwitchUser={handleSwitchUser}
+          onOpenUserManagement={canManageUsers ? () => setIsUserManagementOpen(true) : undefined}
+          onOpenProfileModal={() => setIsProfileModalOpen(true)}
+          canManageUsers={canManageUsers}
+          onOpenAuthModal={() => setIsAuthModalOpen(true)}
+          onLogout={handleLogout}
+        />
+
+        {/* Scrollable Dashboard Workspace */}
+        <main className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">
+          {/* Personalized Workspace Banner for Regular Members/Viewers */}
+          {isRegularUser && (
+            <PersonalUserBanner
+              currentUser={currentUser}
+              tasks={visibleTasks}
+              streak={streak}
+              onFilterMyTasks={() => setFilters((f) => ({ ...f, assigneeFilter: currentUser.id }))}
+              onFilterAllTasks={() => setFilters((f) => ({ ...f, assigneeFilter: currentUser.id }))}
+              isMyTasksActive={true}
+              onStartFocusTimer={handleStartFocusTimer}
+            />
+          )}
+
+          {/* Top 4-Metric Grid */}
+          <DailyProgressCard
+            tasks={visibleTasks}
+            streak={streak}
+            onViewAnalytics={() => setFilters((f) => ({ ...f, period: 'analytics' }))}
+          />
+
+          {/* Conditional Layouts based on Active View */}
+          {filters.period === 'analytics' ? (
+            <div className="bg-white rounded-xl border border-slate-200 p-4 sm:p-6 shadow-xs">
+              <ProgressAnalyticsView
+                tasks={visibleTasks}
+                streak={streak}
+                onExportData={handleExportData}
+                onImportData={handleImportData}
+              />
+            </div>
+          ) : filters.period === 'calendar' ? (
+            <div className="bg-white rounded-xl border border-slate-200 p-4 sm:p-6 shadow-xs">
+              <CalendarView
+                tasks={visibleTasks}
+                onSelectDate={(dateStr) => console.log('Selected date:', dateStr)}
+                onOpenNewTaskWithDate={handleOpenNewTaskWithDate}
+                onToggleComplete={handleToggleComplete}
+                onEditTask={handleOpenEditTask}
+              />
+            </div>
+          ) : (
+            /* High Density 12-Column Grid: 8 Cols Main Content + 4 Cols Widgets */
+            <div className="grid grid-cols-12 gap-5 items-start">
+              {/* Left 8 Cols (or 12 on mobile/tablet): Filters, Quick Add, Task Table */}
+              <div className="col-span-12 xl:col-span-8 space-y-4">
+                {/* Compact Filter Tabs */}
+                <TaskFilterTabs
+                  filters={filters}
+                  onFilterChange={(newFilters) =>
+                    setFilters((prev) => ({ ...prev, ...newFilters }))
+                  }
+                  tasks={visibleTasks}
+                  currentUser={currentUser}
+                  users={users}
+                />
+
+                {/* Quick Add Bar */}
+                {filters.period === 'today' && canCreateTask && (
+                  <QuickAddBar onAddTask={handleSaveTask} />
+                )}
+
+                {/* High Density Task Table / List */}
+                <TaskList
+                  tasks={visibleTasks}
+                  filters={filters}
+                  onToggleComplete={handleToggleComplete}
+                  onToggleSubtask={handleToggleSubtask}
+                  onEdit={handleOpenEditTask}
+                  onDelete={handleDeleteTask}
+                  onStartFocusTimer={handleStartFocusTimer}
+                  onOpenNewTask={handleOpenNewTask}
+                  canEditTask={canEditTask}
+                  canDeleteTask={canDeleteTask}
+                  canToggleComplete={canToggleComplete}
+                  canCreateTask={canCreateTask}
+                />
+              </div>
+
+              {/* Right 4 Cols: Progress Ring & Reminders List */}
+              <div className="col-span-12 xl:col-span-4">
+                <RightSidebarWidgets
+                  tasks={visibleTasks}
+                  streak={streak}
+                  onToggleComplete={handleToggleComplete}
+                  onStartFocusTimer={handleStartFocusTimer}
+                  onOpenNewTask={handleOpenNewTask}
+                />
+              </div>
+            </div>
+          )}
+        </main>
+      </div>
+
+      {/* Floating Active Reminder Alerts */}
+      <ReminderAlertBanner
+        alerts={activeAlerts}
+        onComplete={handleToggleComplete}
+        onSnooze={handleSnoozeReminder}
+        onDismiss={handleDismissReminder}
+        onStartFocusTimer={handleStartFocusTimer}
+      />
+
+      {/* Task Create / Edit Modal */}
+      <TaskModal
+        isOpen={isTaskModalOpen}
+        onClose={() => setIsTaskModalOpen(false)}
+        onSave={handleSaveTask}
+        editingTask={editingTask}
+        users={users}
+        currentUser={currentUser}
+        canAssignTask={canAssignTask}
+      />
+
+      {/* Focus Timer Modal */}
+      <FocusTimerModal
+        isOpen={isFocusTimerOpen}
+        onClose={() => setIsFocusTimerOpen(false)}
+        task={focusTimerTask}
+        onAddFocusMinutes={handleAddFocusMinutes}
+        onCompleteTask={handleToggleComplete}
+      />
+
+      {/* Supabase Cloud Sync Modal */}
+      <SupabaseSyncModal
+        isOpen={isSupabaseModalOpen}
+        onClose={() => setIsSupabaseModalOpen(false)}
+        syncStatus={supabaseSyncStatus}
+        syncMessage={supabaseSyncMessage}
+        onManualSync={handleManualSync}
+        onPushLocalToCloud={handlePushLocalToCloud}
+        onPullCloudToLocal={handlePullCloudToLocal}
+        tasksCount={tasks.length}
+      />
+
+      {/* User Management & Role Permissions (RBAC) Modal */}
+      <UserManagementModal
+        isOpen={isUserManagementOpen}
+        onClose={() => setIsUserManagementOpen(false)}
+        currentUser={currentUser}
+        users={users}
+        rolePermissions={rolePermissions}
+        activityLogs={activityLogs}
+        tasksCountByUser={tasksCountByUser}
+        onSaveUser={handleSaveUser}
+        onDeleteUser={handleDeleteUser}
+        onUpdateRolePermissions={handleUpdateRolePermissions}
+        onSwitchUser={handleSwitchUser}
+      />
+
+      {/* User Profile Modal (Avatar Customizer & Bio) */}
+      <ProfileModal
+        isOpen={isProfileModalOpen}
+        onClose={() => setIsProfileModalOpen(false)}
+        currentUser={currentUser}
+        user={currentUser}
+        onSaveProfile={handleSaveUser}
+      />
+
+      {/* Modern Authentication Login / Password Modal */}
+      <AuthModal
+        isOpen={isAuthModalOpen || !isAuthenticated}
+        onClose={() => {
+          if (isAuthenticated) {
+            setIsAuthModalOpen(false);
+          }
+        }}
+        onLoginSuccess={handleLoginSuccess}
+        onRegisterUser={handleSaveUser}
+        users={users}
+        currentUser={currentUser}
+      />
+    </div>
+  );
+}
