@@ -1,7 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Database,
-  Cloud,
   CheckCircle2,
   AlertCircle,
   Copy,
@@ -11,11 +10,21 @@ import {
   DownloadCloud,
   X,
   Sparkles,
-  KeyRound,
   Server,
+  KeyRound,
+  ShieldCheck,
+  Layers,
+  Save,
+  RotateCcw,
 } from 'lucide-react';
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from '../lib/supabase';
-import { Task, DailyStreak } from '../types';
+import {
+  SUPABASE_URL,
+  SUPABASE_ANON_KEY,
+  SUPABASE_STORAGE_KEYS,
+  initSupabaseClient,
+  testSupabaseHealthCheck,
+  DbHealthReport,
+} from '../lib/supabase';
 
 interface SupabaseSyncModalProps {
   isOpen: boolean;
@@ -26,6 +35,7 @@ interface SupabaseSyncModalProps {
   onPushLocalToCloud: () => Promise<void>;
   onPullCloudToLocal: () => Promise<void>;
   tasksCount: number;
+  usersCount?: number;
 }
 
 export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
@@ -37,22 +47,60 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
   onPushLocalToCloud,
   onPullCloudToLocal,
   tasksCount,
+  usersCount = 0,
 }) => {
+  const [activeTab, setActiveTab] = useState<'status' | 'sql' | 'config'>('status');
   const [copied, setCopied] = useState(false);
   const [isOperating, setIsOperating] = useState(false);
   const [opMessage, setOpMessage] = useState<string | null>(null);
 
+  // Custom Supabase Credentials state
+  const [customUrl, setCustomUrl] = useState('');
+  const [customKey, setCustomKey] = useState('');
+  const [configSavedMessage, setConfigSavedMessage] = useState<string | null>(null);
+
+  // Health report
+  const [healthReport, setHealthReport] = useState<DbHealthReport | null>(null);
+  const [isCheckingHealth, setIsCheckingHealth] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      try {
+        setCustomUrl(localStorage.getItem(SUPABASE_STORAGE_KEYS.CUSTOM_URL) || '');
+        setCustomKey(localStorage.getItem(SUPABASE_STORAGE_KEYS.CUSTOM_KEY) || '');
+      } catch {
+        // Ignore
+      }
+      runHealthCheck();
+    }
+  }, [isOpen]);
+
+  const runHealthCheck = async () => {
+    setIsCheckingHealth(true);
+    try {
+      const report = await testSupabaseHealthCheck();
+      setHealthReport(report);
+    } catch {
+      // Ignore
+    } finally {
+      setIsCheckingHealth(false);
+    }
+  };
+
   if (!isOpen) return null;
 
-  const sqlSchema = `-- SQL Schema សម្រាប់ Supabase Database របស់អ្នក
--- ចូលទៅកាន់ Supabase Dashboard -> SQL Editor រួច Paste កូដខាងក្រោមនេះដើម្បីបង្កើត Tables:
+  const sqlSchema = `-- =========================================================================
+-- TASKMATE KHMER PRO - COMPLETE DATABASE INITIALIZATION SCRIPT FOR SUPABASE
+-- =========================================================================
+-- Copy and run this script in Supabase Dashboard -> SQL Editor
 
+-- 1. TASKS TABLE (កិច្ចការ និងភារកិច្ច)
 create table if not exists public.tasks (
   id text primary key,
   title text not null,
-  description text,
-  category text not null,
-  priority text not null,
+  description text default '',
+  category text not null default 'other',
+  priority text not null default 'medium',
   due_date text not null,
   due_time text,
   reminder_timing text default 'none',
@@ -60,14 +108,39 @@ create table if not exists public.tasks (
   reminder_snoozed_until text,
   completed boolean default false,
   completed_at text,
-  created_at text not null,
+  created_at text not null default now()::text,
   subtasks jsonb default '[]'::jsonb,
   estimated_minutes integer default 25,
   spent_minutes integer default 0,
   recurring text default 'none',
-  tags jsonb default '[]'::jsonb
+  tags jsonb default '[]'::jsonb,
+  assignee_id text,
+  assignee_name text,
+  creator_id text,
+  creator_name text
 );
 
+-- 2. USERS TABLE (គណនី និងសិទ្ធិអ្នកប្រើប្រាស់ RBAC)
+create table if not exists public.users (
+  id text primary key,
+  name text not null,
+  khmer_name text not null,
+  email text not null,
+  password text default '',
+  phone text default '',
+  role text not null default 'member',
+  department text default 'ទូទៅ',
+  avatar_color text default 'from-indigo-500 to-cyan-500',
+  avatar_initial text default 'U',
+  avatar_url text,
+  visibility_scope text default 'all',
+  bio text default '',
+  status text default 'active',
+  joined_date text default now()::text,
+  custom_permissions jsonb default '{}'::jsonb
+);
+
+-- 3. USER STREAK TABLE (ស្ថិតិ និងថ្ងៃជាប់ៗគ្នា)
 create table if not exists public.user_streak (
   id text primary key default 'main',
   current_streak integer default 0,
@@ -77,14 +150,52 @@ create table if not exists public.user_streak (
   total_focus_minutes_all_time integer default 0
 );
 
--- បើកសិទ្ធិ Row Level Security (RLS) អនុញ្ញាតឱ្យសរសេរ និងអានទិន្នន័យ
+-- 4. ACTIVITY LOGS TABLE (កំណត់ត្រាសកម្មភាព)
+create table if not exists public.activity_logs (
+  id text primary key,
+  user_id text not null,
+  user_name text not null,
+  user_role text not null default 'member',
+  action text not null,
+  target_title text not null,
+  details text default '',
+  timestamp text not null default now()::text
+);
+
+-- 5. ROLE PERMISSIONS TABLE (ម៉ាទ្រីសសិទ្ធិ Role Matrix)
+create table if not exists public.role_permissions (
+  id text primary key default 'matrix',
+  matrix jsonb not null,
+  updated_at text not null default now()::text
+);
+
+-- CREATE INDEXES FOR FAST QUERYING
+create index if not exists idx_tasks_due_date on public.tasks(due_date);
+create index if not exists idx_tasks_assignee on public.tasks(assignee_id);
+create index if not exists idx_tasks_completed on public.tasks(completed);
+create index if not exists idx_users_email on public.users(email);
+create index if not exists idx_activity_logs_time on public.activity_logs(timestamp desc);
+
+-- ENABLE ROW LEVEL SECURITY (RLS) & ALLOW ACCESS
 alter table public.tasks enable row level security;
 drop policy if exists "Public tasks access" on public.tasks;
 create policy "Public tasks access" on public.tasks for all using (true) with check (true);
 
+alter table public.users enable row level security;
+drop policy if exists "Public users access" on public.users;
+create policy "Public users access" on public.users for all using (true) with check (true);
+
 alter table public.user_streak enable row level security;
 drop policy if exists "Public streak access" on public.user_streak;
 create policy "Public streak access" on public.user_streak for all using (true) with check (true);
+
+alter table public.activity_logs enable row level security;
+drop policy if exists "Public logs access" on public.activity_logs;
+create policy "Public logs access" on public.activity_logs for all using (true) with check (true);
+
+alter table public.role_permissions enable row level security;
+drop policy if exists "Public role permissions access" on public.role_permissions;
+create policy "Public role permissions access" on public.role_permissions for all using (true) with check (true);
 `;
 
   const handleCopySql = () => {
@@ -93,12 +204,53 @@ create policy "Public streak access" on public.user_streak for all using (true) 
     setTimeout(() => setCopied(false), 2500);
   };
 
+  const handleSaveCustomConfig = () => {
+    try {
+      if (customUrl.trim()) {
+        localStorage.setItem(SUPABASE_STORAGE_KEYS.CUSTOM_URL, customUrl.trim());
+      } else {
+        localStorage.removeItem(SUPABASE_STORAGE_KEYS.CUSTOM_URL);
+      }
+
+      if (customKey.trim()) {
+        localStorage.setItem(SUPABASE_STORAGE_KEYS.CUSTOM_KEY, customKey.trim());
+      } else {
+        localStorage.removeItem(SUPABASE_STORAGE_KEYS.CUSTOM_KEY);
+      }
+
+      initSupabaseClient(customUrl.trim(), customKey.trim());
+      setConfigSavedMessage('បានរក្សាទុក និងភ្ជាប់ឡើងវិញជោគជ័យ! ✅');
+      setTimeout(() => setConfigSavedMessage(null), 3500);
+      runHealthCheck();
+      onManualSync();
+    } catch {
+      setConfigSavedMessage('មានបញ្ហាក្នុងការរក្សាទុក!');
+    }
+  };
+
+  const handleResetToDefault = () => {
+    try {
+      localStorage.removeItem(SUPABASE_STORAGE_KEYS.CUSTOM_URL);
+      localStorage.removeItem(SUPABASE_STORAGE_KEYS.CUSTOM_KEY);
+      setCustomUrl('');
+      setCustomKey('');
+      initSupabaseClient();
+      setConfigSavedMessage('បានកំណត់ទៅ Default Supabase Project វិញរួចរាល់! 🔄');
+      setTimeout(() => setConfigSavedMessage(null), 3500);
+      runHealthCheck();
+      onManualSync();
+    } catch {
+      // Ignore
+    }
+  };
+
   const handlePush = async () => {
     setIsOperating(true);
-    setOpMessage('កំពុងបញ្ជូនទិន្នន័យទៅ Cloud Database...');
+    setOpMessage('កំពុងបញ្ជូនទិន្នន័យទាំងអស់ (Tasks, Users, Logs) ទៅ Cloud Database...');
     try {
       await onPushLocalToCloud();
       setOpMessage('បានបញ្ជូនទិន្នន័យទៅ Supabase ជោគជ័យ! ✅');
+      await runHealthCheck();
     } catch (err: any) {
       setOpMessage(`មានបញ្ហា៖ ${err.message || 'មិនអាចបញ្ជូនបាន'}`);
     } finally {
@@ -113,6 +265,7 @@ create policy "Public streak access" on public.user_streak for all using (true) 
     try {
       await onPullCloudToLocal();
       setOpMessage('បានទាញទិន្នន័យពី Supabase ជោគជ័យ! ✅');
+      await runHealthCheck();
     } catch (err: any) {
       setOpMessage(`មានបញ្ហា៖ ${err.message || 'មិនអាចទាញបាន'}`);
     } finally {
@@ -122,147 +275,346 @@ create policy "Public streak access" on public.user_streak for all using (true) 
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs">
-      <div className="bg-white w-full max-w-xl rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
-        {/* Header */}
-        <div className="bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-700 p-5 text-white flex items-center justify-between">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/75 backdrop-blur-md animate-fade-in">
+      <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
+        {/* Top Header */}
+        <div className="bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-800 p-5 text-white flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-white/15 backdrop-blur-md flex items-center justify-center border border-white/20">
-              <Database className="w-5 h-5 text-white" />
+            <div className="w-11 h-11 rounded-2xl bg-white/15 backdrop-blur-md flex items-center justify-center border border-white/25 shadow-md">
+              <Database className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h2 className="text-base font-bold leading-tight">
-                ការភ្ជាប់ Supabase Database
+              <h2 className="text-base sm:text-lg font-black leading-tight flex items-center gap-2">
+                <span>ការគ្រប់គ្រង Supabase Database</span>
+                <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-full uppercase tracking-wider font-bold">
+                  PostgreSQL Cloud
+                </span>
               </h2>
               <p className="text-xs text-emerald-100 mt-0.5">
-                Cloud Sync & Real-time Database
+                ការកំណត់តារាងទិន្នន័យ, សមកាលកម្ម Real-time & ការធ្វើរោគវិនិច្ឆ័យ
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-colors"
+            className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-colors cursor-pointer"
+            title="បិទ"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Content */}
-        <div className="p-5 space-y-4 overflow-y-auto flex-1">
-          {/* Status Box */}
-          <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-500">ស្ថានភាពភ្ជាប់បច្ចុប្បន្ន</span>
-              <div className="flex items-center gap-1.5">
-                {syncStatus === 'synced' && (
-                  <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700 bg-emerald-100 px-2.5 py-1 rounded-full">
-                    <CheckCircle2 className="w-3.5 h-3.5" /> ភ្ជាប់ជោគជ័យ (Cloud Synced)
+        {/* Tab Navigation */}
+        <div className="flex border-b border-slate-200 bg-slate-50 px-5 pt-2 gap-2 text-xs font-bold">
+          <button
+            onClick={() => setActiveTab('status')}
+            className={`pb-2.5 px-3 border-b-2 transition-all flex items-center gap-1.5 cursor-pointer ${
+              activeTab === 'status'
+                ? 'border-indigo-600 text-indigo-600 font-bold'
+                : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <CheckCircle2 className="w-3.5 h-3.5" />
+            <span>ស្ថានភាព & Diagnostics</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('sql')}
+            className={`pb-2.5 px-3 border-b-2 transition-all flex items-center gap-1.5 cursor-pointer ${
+              activeTab === 'sql'
+                ? 'border-indigo-600 text-indigo-600 font-bold'
+                : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+            <span>SQL Script បង្កើត Tables</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('config')}
+            className={`pb-2.5 px-3 border-b-2 transition-all flex items-center gap-1.5 cursor-pointer ${
+              activeTab === 'config'
+                ? 'border-indigo-600 text-indigo-600 font-bold'
+                : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <KeyRound className="w-3.5 h-3.5 text-teal-600" />
+            <span>ការកំណត់ API Credentials</span>
+          </button>
+        </div>
+
+        {/* Modal Body */}
+        <div className="p-5 space-y-4 overflow-y-auto flex-1 text-slate-800">
+          {/* TAB 1: STATUS & DIAGNOSTICS */}
+          {activeTab === 'status' && (
+            <div className="space-y-4">
+              {/* Status Header */}
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-600 uppercase tracking-wide">
+                    ស្ថានភាពតភ្ជាប់ទូទៅ (Global Connection)
                   </span>
+                  <div className="flex items-center gap-1.5">
+                    {syncStatus === 'synced' && (
+                      <span className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-700 bg-emerald-100 px-3 py-1 rounded-full border border-emerald-200">
+                        <CheckCircle2 className="w-3.5 h-3.5" /> ភ្ជាប់ជោគជ័យ (Cloud Connected)
+                      </span>
+                    )}
+                    {syncStatus === 'syncing' && (
+                      <span className="inline-flex items-center gap-1.5 text-xs font-bold text-indigo-700 bg-indigo-100 px-3 py-1 rounded-full border border-indigo-200">
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" /> កំពុងដំណើរការ Sync...
+                      </span>
+                    )}
+                    {syncStatus === 'error' && (
+                      <span className="inline-flex items-center gap-1.5 text-xs font-bold text-rose-700 bg-rose-100 px-3 py-1 rounded-full border border-rose-200">
+                        <AlertCircle className="w-3.5 h-3.5" /> ត្រូវការបង្កើត Table ក្នុង Supabase
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <p className="text-xs text-slate-700 leading-relaxed font-medium">{syncMessage}</p>
+
+                {opMessage && (
+                  <div className="mt-2 text-xs font-bold p-3 bg-indigo-50 text-indigo-800 rounded-xl border border-indigo-200 flex items-center gap-2">
+                    <RefreshCw className="w-4 h-4 text-indigo-600 animate-spin" />
+                    <span>{opMessage}</span>
+                  </div>
                 )}
-                {syncStatus === 'syncing' && (
-                  <span className="inline-flex items-center gap-1 text-xs font-bold text-indigo-700 bg-indigo-100 px-2.5 py-1 rounded-full">
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" /> កំពុង Sync...
-                  </span>
+              </div>
+
+              {/* Table Diagnostics Card */}
+              <div className="border border-slate-200 rounded-2xl p-4 space-y-3 bg-white shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-bold text-slate-900 flex items-center gap-2">
+                    <Layers className="w-4 h-4 text-indigo-600" />
+                    <span>ការពិនិត្យស្ថានភាពតារាង Database Tables (Health Check)</span>
+                  </h3>
+                  <button
+                    onClick={runHealthCheck}
+                    disabled={isCheckingHealth}
+                    className="flex items-center gap-1 text-[11px] font-bold text-indigo-600 hover:text-indigo-800 p-1 cursor-pointer disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${isCheckingHealth ? 'animate-spin' : ''}`} />
+                    <span>Refresh Check</span>
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+                  {/* Table: tasks */}
+                  <div className="flex items-center justify-between p-2.5 rounded-xl border border-slate-100 bg-slate-50">
+                    <span className="font-mono font-medium text-slate-700">1. public.tasks</span>
+                    {healthReport?.tasksTableOk ? (
+                      <span className="inline-flex items-center gap-1 text-emerald-600 font-bold text-[11px]">
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Ready ({tasksCount})
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-rose-500 font-bold text-[11px]">
+                        <AlertCircle className="w-3.5 h-3.5" /> Missing
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Table: users */}
+                  <div className="flex items-center justify-between p-2.5 rounded-xl border border-slate-100 bg-slate-50">
+                    <span className="font-mono font-medium text-slate-700">2. public.users</span>
+                    {healthReport?.usersTableOk ? (
+                      <span className="inline-flex items-center gap-1 text-emerald-600 font-bold text-[11px]">
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Ready ({usersCount})
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-rose-500 font-bold text-[11px]">
+                        <AlertCircle className="w-3.5 h-3.5" /> Missing
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Table: user_streak */}
+                  <div className="flex items-center justify-between p-2.5 rounded-xl border border-slate-100 bg-slate-50">
+                    <span className="font-mono font-medium text-slate-700">3. public.user_streak</span>
+                    {healthReport?.streakTableOk ? (
+                      <span className="inline-flex items-center gap-1 text-emerald-600 font-bold text-[11px]">
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Ready
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-rose-500 font-bold text-[11px]">
+                        <AlertCircle className="w-3.5 h-3.5" /> Missing
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Table: activity_logs */}
+                  <div className="flex items-center justify-between p-2.5 rounded-xl border border-slate-100 bg-slate-50">
+                    <span className="font-mono font-medium text-slate-700">4. public.activity_logs</span>
+                    {healthReport?.activityLogsTableOk ? (
+                      <span className="inline-flex items-center gap-1 text-emerald-600 font-bold text-[11px]">
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Ready
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-rose-500 font-bold text-[11px]">
+                        <AlertCircle className="w-3.5 h-3.5" /> Missing
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {healthReport && !healthReport.connected && (
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-xs flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-bold">ការណែនាំ៖</p>
+                      <p className="text-[11px] text-amber-700 mt-0.5">
+                        សូមចូលទៅកាន់ផ្ទាំង <strong>"SQL Script បង្កើត Tables"</strong> រួច Copy កូដ SQL យកទៅ Run ក្នុង Supabase Dashboard ដើម្បីបង្កើត Tables ទាំងអស់នេះដោយស្វ័យប្រវត្តិ។
+                      </p>
+                    </div>
+                  </div>
                 )}
-                {syncStatus === 'error' && (
-                  <span className="inline-flex items-center gap-1 text-xs font-bold text-rose-700 bg-rose-100 px-2.5 py-1 rounded-full">
-                    <AlertCircle className="w-3.5 h-3.5" /> មិនទាន់មាន Table
-                  </span>
-                )}
+              </div>
+
+              {/* Data Migration Push/Pull Actions */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                <button
+                  onClick={handlePush}
+                  disabled={isOperating}
+                  className="flex items-center justify-center gap-2 px-4 py-3 rounded-2xl border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs transition-colors cursor-pointer disabled:opacity-50 shadow-2xs"
+                >
+                  <UploadCloud className="w-4 h-4" />
+                  <span>បញ្ជូនទិន្នន័យក្នុងម៉ាស៊ីន ទៅ Cloud</span>
+                </button>
+                <button
+                  onClick={handlePull}
+                  disabled={isOperating}
+                  className="flex items-center justify-center gap-2 px-4 py-3 rounded-2xl border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-xs transition-colors cursor-pointer disabled:opacity-50 shadow-2xs"
+                >
+                  <DownloadCloud className="w-4 h-4" />
+                  <span>ទាញយកទិន្នន័យពី Cloud មកវិញ</span>
+                </button>
               </div>
             </div>
+          )}
 
-            <p className="text-xs text-slate-600">{syncMessage}</p>
-
-            {opMessage && (
-              <div className="mt-2 text-xs font-semibold p-2.5 bg-indigo-50 text-indigo-800 rounded-lg border border-indigo-100">
-                {opMessage}
+          {/* TAB 2: SQL SCRIPT */}
+          {activeTab === 'sql' && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4 text-amber-500" />
+                    <span>SQL Script បង្កើត Table & RLS Policy ពេញលេញ</span>
+                  </h3>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    ចម្លងកូដនេះ ចូល Supabase Dashboard &gt; SQL Editor &gt; New Query រួចចុច <strong>RUN</strong>
+                  </p>
+                </div>
+                <button
+                  onClick={handleCopySql}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-indigo-600/20 cursor-pointer"
+                >
+                  {copied ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-emerald-300" /> បានចម្លងរួចរាល់!
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5" /> ចម្លងកូដ SQL (Copy)
+                    </>
+                  )}
+                </button>
               </div>
-            )}
-          </div>
 
-          {/* Credentials Summary */}
-          <div className="space-y-2">
-            <h3 className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-              <Server className="w-3.5 h-3.5 text-indigo-600" /> ព័ត៌មាន Database API
-            </h3>
-            <div className="bg-slate-900 rounded-xl p-3 text-slate-200 text-xs font-mono space-y-1.5 border border-slate-800">
-              <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
-                <span className="text-slate-400">SUPABASE_URL:</span>
-                <span className="text-emerald-400">{SUPABASE_URL}</span>
+              <div className="relative rounded-2xl overflow-hidden border border-slate-800 shadow-inner">
+                <pre className="bg-slate-950 text-emerald-400 p-4 text-[11px] font-mono overflow-x-auto max-h-72 leading-relaxed selection:bg-indigo-500 selection:text-white">
+                  {sqlSchema}
+                </pre>
               </div>
-              <div className="flex items-center justify-between pt-1">
-                <span className="text-slate-400">PUBLISHABLE_KEY:</span>
-                <span className="text-indigo-300 truncate max-w-[240px]">{SUPABASE_ANON_KEY}</span>
+
+              <div className="p-3 bg-indigo-50/80 rounded-xl border border-indigo-100 text-xs text-indigo-900 flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-indigo-600 shrink-0" />
+                <span>Script នេះបង្កើតតារាងទាំង 5, បង្កើត Index សម្រាប់បង្កើនល្បឿន និងបើកសិទ្ធិ RLS យ៉ាងត្រឹមត្រូវ។</span>
               </div>
             </div>
-          </div>
+          )}
 
-          {/* Quick Sync Actions */}
-          <div className="grid grid-cols-2 gap-3 pt-1">
-            <button
-              onClick={handlePush}
-              disabled={isOperating}
-              className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs transition-colors cursor-pointer disabled:opacity-50"
-            >
-              <UploadCloud className="w-4 h-4" />
-              បញ្ជូនកិច្ចការ ({tasksCount}) ទៅ Cloud
-            </button>
-            <button
-              onClick={handlePull}
-              disabled={isOperating}
-              className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-xs transition-colors cursor-pointer disabled:opacity-50"
-            >
-              <DownloadCloud className="w-4 h-4" />
-              ទាញយកពី Cloud មកវិញ
-            </button>
-          </div>
-
-          {/* SQL Setup Helper */}
-          <div className="border border-slate-200 rounded-xl p-4 bg-slate-50 space-y-2.5">
-            <div className="flex items-center justify-between">
-              <div>
-                <h4 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                  SQL Script បង្កើត Table (សម្រាប់ Supabase SQL Editor)
-                </h4>
-                <p className="text-[11px] text-slate-500 mt-0.5">
-                  បើក Supabase Dashboard រួច Copy & Run កូដនេះប្រសិនបើមិនទាន់បង្កើត Table
+          {/* TAB 3: API CONFIGURATION */}
+          {activeTab === 'config' && (
+            <div className="space-y-4">
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
+                <h3 className="text-xs font-bold text-slate-800 flex items-center gap-2">
+                  <Server className="w-4 h-4 text-indigo-600" />
+                  <span>ព័ត៌មានគណនី Supabase Project ផ្ទាល់ខ្លួន</span>
+                </h3>
+                <p className="text-[11px] text-slate-600 leading-relaxed">
+                  អ្នកអាចបញ្ចូល Project URL និង Anon Publishable Key នៃ Supabase Project ផ្ទាល់ខ្លួនរបស់អ្នកនៅទីនេះបាន។ ប្រសិនបើទុកចោល ប្រព័ន្ធនឹងប្រើប្រាស់ Default Project។
                 </p>
-              </div>
-              <button
-                onClick={handleCopySql}
-                className="flex items-center gap-1 px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-700 hover:bg-slate-100 transition-colors shadow-2xs"
-              >
-                {copied ? (
-                  <>
-                    <Check className="w-3.5 h-3.5 text-emerald-600" /> បាន Copy
-                  </>
-                ) : (
-                  <>
-                    <Copy className="w-3.5 h-3.5 text-slate-500" /> Copy SQL
-                  </>
-                )}
-              </button>
-            </div>
 
-            <pre className="bg-slate-900 text-emerald-400 p-3 rounded-lg text-[10px] font-mono overflow-x-auto max-h-36 border border-slate-800 leading-relaxed">
-              {sqlSchema}
-            </pre>
-          </div>
+                {configSavedMessage && (
+                  <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs font-bold flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    <span>{configSavedMessage}</span>
+                  </div>
+                )}
+
+                <div className="space-y-3 pt-1">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Project URL (e.g. https://xyzcompany.supabase.co)
+                    </label>
+                    <input
+                      type="text"
+                      value={customUrl}
+                      onChange={(e) => setCustomUrl(e.target.value)}
+                      placeholder={SUPABASE_URL}
+                      className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-xs font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Anon Publishable Key (sb_publishable_...)
+                    </label>
+                    <input
+                      type="password"
+                      value={customKey}
+                      onChange={(e) => setCustomKey(e.target.value)}
+                      placeholder="បញ្ចូល Anon Key របស់អ្នក..."
+                      className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-xs font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-2.5 pt-2">
+                    <button
+                      onClick={handleSaveCustomConfig}
+                      className="flex items-center gap-1.5 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-600/20 cursor-pointer"
+                    >
+                      <Save className="w-3.5 h-3.5" />
+                      <span>រក្សាទុក & ភ្ជាប់ឡើងវិញ</span>
+                    </button>
+                    <button
+                      onClick={handleResetToDefault}
+                      className="flex items-center gap-1.5 px-3 py-2.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-xs font-bold cursor-pointer transition-colors"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      <span>កំណត់ទៅ Default វិញ</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Footer */}
         <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
           <button
-            onClick={onManualSync}
-            className="flex items-center gap-1.5 text-xs font-bold text-slate-600 hover:text-indigo-600 transition-colors"
+            onClick={async () => {
+              await onManualSync();
+              await runHealthCheck();
+            }}
+            className="flex items-center gap-1.5 text-xs font-bold text-slate-600 hover:text-indigo-600 transition-colors cursor-pointer"
           >
-            <RefreshCw className="w-3.5 h-3.5" /> ពិនិត្យការតភ្ជាប់ឡើងវិញ
+            <RefreshCw className="w-3.5 h-3.5" /> ផ្ទៀងផ្ទាត់ការតភ្ជាប់ម្តងទៀត
           </button>
           <button
             onClick={onClose}
-            className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer"
+            className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-all shadow-md cursor-pointer"
           >
             បិទផ្ទាំង
           </button>

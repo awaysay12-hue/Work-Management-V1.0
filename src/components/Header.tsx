@@ -113,26 +113,34 @@ export const Header: React.FC<HeaderProps> = ({
   const currentRoleCfg = ROLE_CONFIGS[currentUser.role] || ROLE_CONFIGS.member;
 
   return (
-    <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 sm:px-6 lg:px-8 sticky top-0 z-20 shrink-0 select-none">
+    <header className="h-14 sm:h-16 bg-white border-b border-slate-200 flex items-center justify-between px-3 sm:px-6 lg:px-8 sticky top-0 z-30 shrink-0 select-none">
       {/* Left: Hamburger on mobile + Greeting & Status Pill */}
-      <div className="flex items-center gap-3 sm:gap-4">
+      <div className="flex items-center gap-2 sm:gap-4 min-w-0 flex-1 mr-2">
         {/* Mobile menu trigger */}
         <button
           onClick={onToggleMobileSidebar}
-          className="lg:hidden p-2 rounded-lg text-slate-600 hover:bg-slate-100 transition-colors"
+          className="lg:hidden p-1.5 sm:p-2 rounded-lg text-slate-600 hover:bg-slate-100 active:bg-slate-200 transition-colors shrink-0"
           aria-label="Open sidebar menu"
         >
           <Menu className="w-5 h-5" />
         </button>
 
-        <div className="flex items-center gap-2.5">
-          <h2 className="text-base sm:text-lg font-bold text-slate-800">
-            សួស្តី, {currentUser.khmerName}
-          </h2>
-          <span className={`inline-flex items-center gap-1 text-[10px] sm:text-xs px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full font-bold border ${currentRoleCfg.badgeBg} ${currentRoleCfg.badgeText} ${currentRoleCfg.badgeBorder}`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${currentRoleCfg.dotColor}`}></span>
-            {currentRoleCfg.titleKh}
-          </span>
+        {/* User Greeting - Optimized for Phone */}
+        <div className="flex items-center gap-1.5 sm:gap-2.5 min-w-0">
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs sm:text-base font-bold text-slate-800 truncate">
+                សួស្តី, {currentUser.khmerName}
+              </span>
+              <span className={`inline-flex items-center gap-1 text-[9px] sm:text-xs px-1.5 py-0.5 sm:px-2.5 sm:py-1 rounded-full font-bold border shrink-0 ${currentRoleCfg.badgeBg} ${currentRoleCfg.badgeText} ${currentRoleCfg.badgeBorder}`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${currentRoleCfg.dotColor}`}></span>
+                <span className="hidden xs:inline">{currentRoleCfg.titleKh}</span>
+              </span>
+            </div>
+            <p className="text-[10px] text-slate-400 font-medium sm:hidden truncate">
+              {formatKhmerDate(todayStr, false)}
+            </p>
+          </div>
         </div>
 
         <div className="hidden xl:flex items-center text-xs text-slate-500 pl-2 border-l border-slate-200">
@@ -142,12 +150,12 @@ export const Header: React.FC<HeaderProps> = ({
       </div>
 
       {/* Right: Sound, Notifications, Streak & User Profile */}
-      <div className="flex items-center gap-2 sm:gap-3">
+      <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
         {/* Cloud Database Sync Pill */}
         {onOpenSupabaseModal && (
           <button
             onClick={onOpenSupabaseModal}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-bold transition-all cursor-pointer ${
+            className={`flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded-lg border text-xs font-bold transition-all cursor-pointer ${
               supabaseSyncStatus === 'synced'
                 ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
                 : supabaseSyncStatus === 'syncing'
@@ -157,7 +165,7 @@ export const Header: React.FC<HeaderProps> = ({
             title="Supabase Database Status & Sync"
           >
             <Database className="w-3.5 h-3.5" />
-            <span className="hidden md:inline">
+            <span className="hidden sm:inline">
               {supabaseSyncStatus === 'synced' ? 'Cloud DB' : supabaseSyncStatus === 'syncing' ? 'Syncing...' : 'DB Ready'}
             </span>
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
@@ -176,20 +184,20 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Sound Toggle */}
         <button
           onClick={onToggleSound}
-          className={`p-2 rounded-lg border text-xs transition-colors ${
+          className={`p-1.5 sm:p-2 rounded-lg border text-xs transition-colors ${
             soundEnabled
               ? 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200'
               : 'bg-white border-slate-200 text-slate-400 hover:bg-slate-50'
           }`}
           title={soundEnabled ? 'បិទសំឡេង' : 'បើកសំឡេង'}
         >
-          {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+          {soundEnabled ? <Volume2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> : <VolumeX className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
         </button>
 
         {/* Notification Bell */}
         <button
           onClick={handleRequestNotification}
-          className="relative p-2 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-100 border border-slate-200 transition-colors"
+          className="relative p-1.5 sm:p-2 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-100 border border-slate-200 transition-colors"
           title={
             notificationPermission === 'granted'
               ? 'ការជូនដំណឹងបានបើក'
@@ -197,35 +205,36 @@ export const Header: React.FC<HeaderProps> = ({
           }
         >
           {activeRemindersCount > 0 ? (
-            <BellRing className="w-4 h-4 text-indigo-600 animate-bounce" />
+            <BellRing className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-indigo-600 animate-bounce" />
           ) : (
-            <Bell className="w-4 h-4" />
+            <Bell className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
           )}
           {activeRemindersCount > 0 && (
-            <span className="absolute -top-1 -right-1 w-4 h-4 bg-rose-500 text-white rounded-full text-[9px] font-black flex items-center justify-center border-2 border-white shadow-2xs">
+            <span className="absolute -top-1 -right-1 w-3.5 h-3.5 sm:w-4 sm:h-4 bg-rose-500 text-white rounded-full text-[8px] sm:text-[9px] font-black flex items-center justify-center border-2 border-white shadow-2xs">
               {toKhmerNumber(activeRemindersCount)}
             </span>
           )}
         </button>
 
-        {/* New Task Button - Protected by Permission */}
+        {/* New Task Button - Hidden on mobile because MobileBottomNav has FAB */}
         {canCreateTask && (
           <button
             onClick={onOpenNewTask}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
+            className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
-            <span className="hidden xs:inline">កិច្ចការថ្មី +</span>
+            <span>កិច្ចការថ្មី +</span>
           </button>
         )}
 
         {/* User Profile Pill & Dropdown Switcher */}
-        <div className="relative border-l pl-2 sm:pl-3 border-slate-200" ref={profileMenuRef}>
+        <div className="relative border-l pl-1.5 sm:pl-3 border-slate-200" ref={profileMenuRef}>
           <button
             onClick={() => setIsProfileMenuOpen(!isProfileMenuOpen)}
-            className="flex items-center gap-2 p-1 rounded-xl hover:bg-slate-100 transition-all cursor-pointer text-left"
+            className="flex items-center gap-1.5 sm:gap-2 p-0.5 sm:p-1 rounded-xl hover:bg-slate-100 transition-all cursor-pointer text-left"
+            aria-label="User profile menu"
           >
-            <div className="text-right hidden sm:block">
+            <div className="text-right hidden md:block">
               <p className="text-xs font-bold text-slate-900 leading-tight">
                 {currentUser.khmerName}
               </p>
@@ -242,12 +251,12 @@ export const Header: React.FC<HeaderProps> = ({
               size="sm"
               showBadge={true}
             />
-            <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${isProfileMenuOpen ? 'rotate-180' : ''}`} />
+            <ChevronDown className={`w-3 h-3 sm:w-3.5 sm:h-3.5 text-slate-400 transition-transform ${isProfileMenuOpen ? 'rotate-180' : ''}`} />
           </button>
 
-          {/* Dropdown Menu */}
+          {/* Dropdown Menu - Fixed positioning on mobile so it never overflows */}
           {isProfileMenuOpen && (
-            <div className="absolute right-0 mt-2 w-72 bg-white rounded-2xl shadow-xl border border-slate-200 py-2 z-50 animate-in fade-in zoom-in-95 duration-150">
+            <div className="absolute right-0 mt-2 w-[calc(100vw-1.5rem)] max-w-xs sm:w-72 bg-white rounded-2xl shadow-2xl border border-slate-200 py-2 z-50 animate-in fade-in zoom-in-95 duration-150">
               {/* Profile Card Header */}
               <div className="px-4 py-3 border-b border-slate-100 bg-slate-50/70">
                 <div className="flex items-center gap-3">

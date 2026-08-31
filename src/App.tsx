@@ -29,7 +29,17 @@ import {
   deleteTaskFromSupabase,
   fetchStreakFromSupabase,
   saveStreakToSupabase,
+  fetchUsersFromSupabase,
+  saveUserToSupabase,
+  syncAllUsersToSupabase,
+  deleteUserFromSupabase,
+  fetchActivityLogsFromSupabase,
+  saveActivityLogToSupabase,
+  syncAllActivityLogsToSupabase,
+  fetchRolePermissionsFromSupabase,
+  saveRolePermissionsToSupabase,
   dbRowToTask,
+  dbRowToUser,
 } from './lib/supabase';
 
 import { Sidebar } from './components/Sidebar';
@@ -49,6 +59,7 @@ import { UserManagementModal } from './components/UserManagementModal';
 import { AuthModal } from './components/AuthModal';
 import { PersonalUserBanner } from './components/PersonalUserBanner';
 import { ProfileModal } from './components/ProfileModal';
+import { MobileBottomNav } from './components/MobileBottomNav';
 
 const STORAGE_KEYS = {
   TASKS: 'kh_daily_tasks_data_v1',
@@ -156,7 +167,7 @@ export default function App() {
     } catch {
       // Ignore
     }
-    return true; // Keep authenticated initially for smooth experience
+    return false; // Default to false so opening the link prompts login screen immediately
   });
 
   // Supabase Sync States
@@ -322,6 +333,11 @@ export default function App() {
       return [...prev, savedUser];
     });
 
+    // Save to Supabase Cloud
+    saveUserToSupabase(savedUser).catch((err) =>
+      console.warn('Failed to save user to Supabase:', err)
+    );
+
     // If updating current user's profile
     if (savedUser.id === currentUser.id) {
       setCurrentUser(savedUser);
@@ -341,54 +357,89 @@ export default function App() {
       }
     }
     logActivity('delete_user', userToDelete?.khmerName || userId, `បានលុបគណនីចេញពីប្រព័ន្ធ`);
+
+    // Delete in Supabase Cloud
+    deleteUserFromSupabase(userId).catch((err) =>
+      console.warn('Failed to delete user in Supabase:', err)
+    );
   };
 
   const handleUpdateRolePermissions = (newPermissions: Record<UserRole, RolePermissions>) => {
     soundFx.playClick();
     setRolePermissions(newPermissions);
     logActivity('update_role', 'RBAC Matrix', 'បានកែសម្រួលម៉ាទ្រីសសិទ្ធិ & វិសាលភាព');
+
+    // Save Role Matrix in Supabase Cloud
+    saveRolePermissionsToSupabase(newPermissions).catch((err) =>
+      console.warn('Failed to save role permissions to Supabase:', err)
+    );
   };
 
-  // Initial Sync from Supabase
+  // Initial Sync from Supabase (Tasks, Users, Streak, Logs, Role Matrix)
   useEffect(() => {
     let isMounted = true;
 
     async function initSupabaseData() {
       if (!supabase) return;
       setSupabaseSyncStatus('syncing');
-      setSupabaseSyncMessage('កំពុងទាញទិន្នន័យពី Supabase...');
+      setSupabaseSyncMessage('កំពុងទាញទិន្នន័យពី Cloud Database...');
 
       try {
-        const [tasksRes, streakRes] = await Promise.all([
+        const [tasksRes, usersRes, streakRes, logsRes, rbacRes] = await Promise.all([
           fetchTasksFromSupabase(),
+          fetchUsersFromSupabase(),
           fetchStreakFromSupabase(),
+          fetchActivityLogsFromSupabase(),
+          fetchRolePermissionsFromSupabase(),
         ]);
 
         if (!isMounted) return;
 
-        if (tasksRes.error) {
-          console.warn('Supabase tasks fetch warning:', tasksRes.error.message);
-          setSupabaseSyncStatus('error');
-          setSupabaseSyncMessage(`មិនទាន់មាន Table tasks ក្នុង Supabase ឬមានបញ្ហា RLS៖ ${tasksRes.error.message}`);
-          return;
-        }
-
+        // 1. Sync Tasks
         if (tasksRes.tasks && tasksRes.tasks.length > 0) {
           setTasks(tasksRes.tasks);
-          setSupabaseSyncStatus('synced');
-          setSupabaseSyncMessage(`ទាញបាន ${tasksRes.tasks.length} ភារកិច្ចពី Supabase ជោគជ័យ`);
-        } else {
+        } else if (!tasksRes.error && tasks.length > 0) {
           // If remote is empty, push local initial tasks to Supabase
-          const currentLocalTasks = tasks;
-          if (currentLocalTasks.length > 0) {
-            await syncAllTasksToSupabase(currentLocalTasks);
-          }
-          setSupabaseSyncStatus('synced');
-          setSupabaseSyncMessage('Supabase Database ដំណើរការយ៉ាងល្អ (Synced)');
+          syncAllTasksToSupabase(tasks).catch(() => {});
         }
 
+        // 2. Sync Users
+        if (usersRes.users && usersRes.users.length > 0) {
+          setUsers(usersRes.users);
+          // Keep current logged-in user in sync
+          const matchedUser = usersRes.users.find((u) => u.id === currentUser.id);
+          if (matchedUser) setCurrentUser(matchedUser);
+        } else if (!usersRes.error && users.length > 0) {
+          syncAllUsersToSupabase(users).catch(() => {});
+        }
+
+        // 3. Sync Streak
         if (streakRes.streak) {
           setStreak(streakRes.streak);
+        } else if (!streakRes.error) {
+          saveStreakToSupabase(streak).catch(() => {});
+        }
+
+        // 4. Sync Activity Logs
+        if (logsRes.logs && logsRes.logs.length > 0) {
+          setActivityLogs(logsRes.logs);
+        } else if (!logsRes.error && activityLogs.length > 0) {
+          syncAllActivityLogsToSupabase(activityLogs).catch(() => {});
+        }
+
+        // 5. Sync Role Permissions Matrix
+        if (rbacRes.permissions) {
+          setRolePermissions(rbacRes.permissions);
+        } else if (!rbacRes.error) {
+          saveRolePermissionsToSupabase(rolePermissions).catch(() => {});
+        }
+
+        if (tasksRes.error || usersRes.error) {
+          setSupabaseSyncStatus('error');
+          setSupabaseSyncMessage('ត្រូវការ Run SQL Script ក្នុង Supabase Dashboard ដើម្បីបង្កើត Tables');
+        } else {
+          setSupabaseSyncStatus('synced');
+          setSupabaseSyncMessage(`បានធ្វើសមកាលកម្មទិន្នន័យ (${tasksRes.tasks?.length || tasks.length} កិច្ចការ, ${usersRes.users?.length || users.length} គណនី)`);
         }
       } catch (err: any) {
         if (!isMounted) return;
@@ -399,12 +450,15 @@ export default function App() {
 
     initSupabaseData();
 
-    // Supabase Real-time listener for tasks
-    let channel: any = null;
+    // Supabase Real-time listeners
+    let tasksChannel: any = null;
+    let usersChannel: any = null;
+
     try {
       if (supabase) {
-        channel = supabase
-          .channel('public:tasks')
+        // Real-time listener for tasks
+        tasksChannel = supabase
+          .channel('public:tasks_stream')
           .on(
             'postgres_changes',
             { event: '*', schema: 'public', table: 'tasks' },
@@ -429,15 +483,44 @@ export default function App() {
             }
           )
           .subscribe();
+
+        // Real-time listener for users
+        usersChannel = supabase
+          .channel('public:users_stream')
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'users' },
+            (payload) => {
+              if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+                const updatedUser = dbRowToUser(payload.new);
+                setUsers((prev) => {
+                  const exists = prev.some((u) => u.id === updatedUser.id);
+                  if (exists) {
+                    return prev.map((u) => (u.id === updatedUser.id ? updatedUser : u));
+                  }
+                  return [...prev, updatedUser];
+                });
+              } else if (payload.eventType === 'DELETE') {
+                const deletedId = payload.old?.id;
+                if (deletedId) {
+                  setUsers((prev) => prev.filter((u) => u.id !== String(deletedId)));
+                }
+              }
+            }
+          )
+          .subscribe();
       }
     } catch (err) {
-      console.warn('Realtime channel error:', err);
+      console.warn('Realtime channels error:', err);
     }
 
     return () => {
       isMounted = false;
-      if (channel && supabase) {
-        supabase.removeChannel(channel);
+      if (tasksChannel && supabase) {
+        supabase.removeChannel(tasksChannel);
+      }
+      if (usersChannel && supabase) {
+        supabase.removeChannel(usersChannel);
       }
     };
   }, []);
@@ -446,45 +529,73 @@ export default function App() {
   const handleManualSync = async () => {
     setSupabaseSyncStatus('syncing');
     setSupabaseSyncMessage('កំពុងផ្ទៀងផ្ទាត់ការតភ្ជាប់ Database...');
-    const { tasks: cloudTasks, error } = await fetchTasksFromSupabase();
-    if (error) {
+    const [tasksRes, usersRes, streakRes] = await Promise.all([
+      fetchTasksFromSupabase(),
+      fetchUsersFromSupabase(),
+      fetchStreakFromSupabase(),
+    ]);
+
+    if (tasksRes.error || usersRes.error) {
       setSupabaseSyncStatus('error');
-      setSupabaseSyncMessage(`បញ្ហា៖ ${error.message}`);
+      setSupabaseSyncMessage(`បញ្ហា៖ ${(tasksRes.error || usersRes.error)?.message}`);
     } else {
-      if (cloudTasks && cloudTasks.length > 0) {
-        setTasks(cloudTasks);
+      if (tasksRes.tasks && tasksRes.tasks.length > 0) {
+        setTasks(tasksRes.tasks);
+      }
+      if (usersRes.users && usersRes.users.length > 0) {
+        setUsers(usersRes.users);
+      }
+      if (streakRes.streak) {
+        setStreak(streakRes.streak);
       }
       setSupabaseSyncStatus('synced');
-      setSupabaseSyncMessage('បានធ្វើសមកាលកម្មជាមួយ Supabase ជោគជ័យ! ✅');
+      setSupabaseSyncMessage('បានធ្វើសមកាលកម្មជាមួយ Database ជោគជ័យ! ✅');
     }
   };
 
   // Push local state to Cloud
   const handlePushLocalToCloud = async () => {
     setSupabaseSyncStatus('syncing');
-    const { success, error } = await syncAllTasksToSupabase(tasks);
-    if (!success || error) {
+    const [tasksRes, usersRes, streakRes, logsRes, rbacRes] = await Promise.all([
+      syncAllTasksToSupabase(tasks),
+      syncAllUsersToSupabase(users),
+      saveStreakToSupabase(streak),
+      syncAllActivityLogsToSupabase(activityLogs),
+      saveRolePermissionsToSupabase(rolePermissions),
+    ]);
+
+    if (!tasksRes.success || tasksRes.error) {
       setSupabaseSyncStatus('error');
-      throw error || new Error('មិនអាចបញ្ជូនទិន្នន័យបាន');
+      throw tasksRes.error || new Error('មិនអាចបញ្ជូនទិន្នន័យ Tasks បាន');
     }
-    await saveStreakToSupabase(streak);
     setSupabaseSyncStatus('synced');
-    setSupabaseSyncMessage(`បានបញ្ជូន ${tasks.length} ភារកិច្ចទៅ Supabase រួចរាល់`);
+    setSupabaseSyncMessage(`បានបញ្ជូន ${tasks.length} ភារកិច្ច និង ${users.length} គណនីទៅ Supabase រួចរាល់ ✅`);
   };
 
   // Pull Cloud to local
   const handlePullCloudToLocal = async () => {
     setSupabaseSyncStatus('syncing');
-    const { tasks: cloudTasks, error } = await fetchTasksFromSupabase();
-    if (error || !cloudTasks) {
+    const [tasksRes, usersRes, streakRes, logsRes, rbacRes] = await Promise.all([
+      fetchTasksFromSupabase(),
+      fetchUsersFromSupabase(),
+      fetchStreakFromSupabase(),
+      fetchActivityLogsFromSupabase(),
+      fetchRolePermissionsFromSupabase(),
+    ]);
+
+    if (tasksRes.error || !tasksRes.tasks) {
       setSupabaseSyncStatus('error');
-      throw error || new Error('មិនអាចទាញទិន្នន័យបាន');
+      throw tasksRes.error || new Error('មិនអាចទាញទិន្នន័យបាន');
     }
-    setTasks(cloudTasks);
-    const { streak: cloudStreak } = await fetchStreakFromSupabase();
-    if (cloudStreak) setStreak(cloudStreak);
+
+    setTasks(tasksRes.tasks);
+    if (usersRes.users && usersRes.users.length > 0) setUsers(usersRes.users);
+    if (streakRes.streak) setStreak(streakRes.streak);
+    if (logsRes.logs && logsRes.logs.length > 0) setActivityLogs(logsRes.logs);
+    if (rbacRes.permissions) setRolePermissions(rbacRes.permissions);
+
     setSupabaseSyncStatus('synced');
-    setSupabaseSyncMessage(`បានទាញ ${cloudTasks.length} ភារកិច្ចពី Supabase ជោគជ័យ`);
+    setSupabaseSyncMessage(`បានទាញ ${tasksRes.tasks.length} ភារកិច្ច និង ${usersRes.users?.length || 0} គណនីពី Cloud ជោគជ័យ ✅`);
   };
 
   // Sync state to localStorage
@@ -822,6 +933,32 @@ export default function App() {
     return tasks.filter((t) => canUserViewTask(t, currentUser, users, rolePermissions));
   }, [tasks, currentUser, users, rolePermissions]);
 
+  const todayStr = getTodayDateString();
+  const mobileTodayPending = useMemo(() => {
+    return visibleTasks.filter((t) => t.dueDate === todayStr && !t.completed).length;
+  }, [visibleTasks, todayStr]);
+
+  const mobileOverduePending = useMemo(() => {
+    return visibleTasks.filter((t) => t.dueDate < todayStr && !t.completed).length;
+  }, [visibleTasks, todayStr]);
+
+  // If user is not yet logged in, render the dedicated high-performance Login View directly
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen w-full bg-slate-950 flex flex-col justify-center items-center p-3 sm:p-6 antialiased">
+        <AuthModal
+          isOpen={true}
+          isFullScreen={true}
+          forceLoginScreen={true}
+          onLoginSuccess={handleLoginSuccess}
+          onRegisterUser={handleSaveUser}
+          users={users}
+          currentUser={currentUser}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-screen w-full bg-slate-100 font-sans overflow-hidden antialiased text-slate-900">
       {/* High Density Dark Indigo Sidebar */}
@@ -872,7 +1009,7 @@ export default function App() {
         />
 
         {/* Scrollable Dashboard Workspace */}
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">
+        <main className="flex-1 overflow-y-auto p-3 sm:p-6 pb-24 lg:pb-6 space-y-4 sm:space-y-5">
           {/* Personalized Workspace Banner for Regular Members/Viewers */}
           {isRegularUser && (
             <PersonalUserBanner
@@ -1005,6 +1142,7 @@ export default function App() {
         onPushLocalToCloud={handlePushLocalToCloud}
         onPullCloudToLocal={handlePullCloudToLocal}
         tasksCount={tasks.length}
+        usersCount={users.length}
       />
 
       {/* User Management & Role Permissions (RBAC) Modal */}
@@ -1043,6 +1181,17 @@ export default function App() {
         onRegisterUser={handleSaveUser}
         users={users}
         currentUser={currentUser}
+      />
+
+      {/* Mobile App Bottom Navigation Bar (Phone Form Factor) */}
+      <MobileBottomNav
+        currentView={filters.period}
+        onNavigate={handleSidebarNavigate}
+        onOpenNewTask={handleOpenNewTask}
+        onOpenMobileMenu={() => setIsMobileSidebarOpen(true)}
+        todayCount={mobileTodayPending}
+        overdueCount={mobileOverduePending}
+        canCreateTask={canCreateTask}
       />
     </div>
   );
