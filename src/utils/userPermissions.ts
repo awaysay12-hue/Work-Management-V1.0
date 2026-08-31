@@ -293,13 +293,13 @@ export const PERMISSION_DEFINITIONS: Array<{
 export const INITIAL_USERS: UserAccount[] = [
   {
     id: 'user-admin-1',
-    name: 'Sun Punleu (Admin)',
-    khmerName: 'ស៊ុន ពន្លឺ (Super Admin)',
-    email: 'admin@taskmate.kh',
-    password: 'admin123',
-    phone: '012 888 999',
+    name: 'PUNLEU (Admin)',
+    khmerName: 'ពន្លឺ (Super Admin)',
+    email: 'sunpunleu168@gmail.com',
+    password: '123',
+    phone: '012 000 000',
     role: 'admin',
-    department: 'ថ្នាក់ដឹកនាំ / Management',
+    department: 'បច្ចេកវិទ្យា & IT',
     avatarColor: 'from-rose-500 to-indigo-600',
     avatarInitial: 'ព',
     avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200&auto=format&fit=crop&q=80',
@@ -308,116 +308,18 @@ export const INITIAL_USERS: UserAccount[] = [
     status: 'active',
     joinedDate: '2025-01-10',
   },
-  {
-    id: 'user-mgr-1',
-    name: 'Sokha Kong',
-    khmerName: 'សុខា គង់',
-    email: 'sokha@taskmate.kh',
-    password: 'manager123',
-    phone: '015 777 666',
-    role: 'manager',
-    department: 'គ្រប់គ្រងគម្រោង / PMO',
-    avatarColor: 'from-indigo-500 to-cyan-500',
-    avatarInitial: 'ស',
-    avatarUrl: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=200&auto=format&fit=crop&q=80',
-    visibilityScope: 'department',
-    bio: 'Project Manager - សម្របសម្រួលគម្រោង និងតាមដានវឌ្ឍនភាពក្រុមការងារ',
-    status: 'active',
-    joinedDate: '2025-02-15',
-  },
-  {
-    id: 'user-mem-1',
-    name: 'Bopha Seng',
-    khmerName: 'បុប្ផា សេង',
-    email: 'bopha@taskmate.kh',
-    password: 'member123',
-    phone: '098 555 444',
-    role: 'member',
-    department: 'បច្ចេកវិទ្យា & IT',
-    avatarColor: 'from-emerald-500 to-teal-600',
-    avatarInitial: 'ប',
-    avatarUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200&auto=format&fit=crop&q=80',
-    visibilityScope: 'department',
-    bio: 'Senior Software Engineer - អភិវឌ្ឍន៍ប្រព័ន្ធបច្ចេកវិទ្យា',
-    status: 'active',
-    joinedDate: '2025-03-01',
-  },
-  {
-    id: 'user-mem-2',
-    name: 'Vicheka Mao',
-    khmerName: 'វិចិត្រ ម៉ៅ',
-    email: 'vicheka.mao@company.com',
-    password: 'member123',
-    phone: '089 333 222',
-    role: 'member',
-    department: 'រចនា & Design',
-    avatarColor: 'from-amber-500 to-orange-600',
-    avatarInitial: 'វ',
-    avatarUrl: 'https://images.unsplash.com/photo-1580489944761-15a19d654956?w=200&auto=format&fit=crop&q=80',
-    visibilityScope: 'assigned_only',
-    bio: 'UI/UX Product Designer - រចនាបទពិសោធន៍អ្នកប្រើប្រាស់',
-    status: 'active',
-    joinedDate: '2025-04-12',
-  },
-  {
-    id: 'user-view-1',
-    name: 'Dara Heng',
-    khmerName: 'ដារ៉ា ហេង',
-    email: 'dara@taskmate.kh',
-    password: 'viewer123',
-    phone: '070 111 222',
-    role: 'viewer',
-    department: 'សវនកម្ម / Guest Auditor',
-    avatarColor: 'from-slate-500 to-slate-700',
-    avatarInitial: 'ដ',
-    avatarUrl: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=200&auto=format&fit=crop&q=80',
-    visibilityScope: 'all',
-    bio: 'Internal Quality Auditor - ត្រួតពិនិត្យ និងតាមដានរបាយការណ៍',
-    status: 'active',
-    joinedDate: '2025-05-20',
-  },
 ];
 
 export const INITIAL_ACTIVITY_LOGS: ActivityLog[] = [
   {
     id: 'log-1',
     userId: 'user-admin-1',
-    userName: 'សុភ័ក្ត្រ ចាន់',
+    userName: 'ពន្លឺ (Super Admin)',
     userRole: 'admin',
     action: 'sync_db',
     targetTitle: 'Supabase Cloud Database',
-    details: 'បានភ្ជាប់ និងធ្វើសមកាលកម្មទិន្នន័យជោគជ័យ',
-    timestamp: new Date(Date.now() - 1000 * 60 * 15).toISOString(),
-  },
-  {
-    id: 'log-2',
-    userId: 'user-mgr-1',
-    userName: 'ចរិយា គង់',
-    userRole: 'manager',
-    action: 'assign_task',
-    targetTitle: 'រៀបចំកិច្ចប្រជុំក្រុមការងារប្រចាំសប្តាហ៍',
-    details: 'ចាត់តាំងឱ្យ៖ រតនា សេង',
-    timestamp: new Date(Date.now() - 1000 * 60 * 45).toISOString(),
-  },
-  {
-    id: 'log-3',
-    userId: 'user-mem-1',
-    userName: 'រតនា សេង',
-    userRole: 'member',
-    action: 'complete_task',
-    targetTitle: 'ពិនិត្យរបាយការណ៍ និងរៀបចំកិច្ចប្រជុំក្រុមការងារ',
-    details: 'បញ្ចប់កិច្ចការរងទាំងអស់ ៣/៣',
-    timestamp: new Date(Date.now() - 1000 * 60 * 120).toISOString(),
-  },
-  {
-    id: 'log-4',
-    userId: 'user-admin-1',
-    userName: 'សុភ័ក្ត្រ ចាន់',
-    userRole: 'admin',
-    action: 'add_user',
-    targetTitle: 'ស្រីពេជ្រ ហេង',
-    details: 'បង្កើតគណនីថ្មី តួនាទី៖ អ្នកមើល (Viewer)',
-    timestamp: new Date(Date.now() - 1000 * 60 * 240).toISOString(),
+    details: 'បានរៀបចំប្រព័ន្ធ Database និងគណនីអ្នកប្រើប្រាស់រួចរាល់',
+    timestamp: new Date().toISOString(),
   },
 ];
 
@@ -566,47 +468,14 @@ export interface DemoCredential {
 export const DEMO_LOGIN_ACCOUNTS: DemoCredential[] = [
   {
     role: 'admin',
-    email: 'admin@taskmate.kh',
-    password: 'admin123',
-    nameKh: 'ស៊ុន ពន្លឺ (Super Admin)',
-    nameEn: 'Sun Punleu (Admin)',
+    email: 'sunpunleu168@gmail.com',
+    password: '123',
+    nameKh: 'ពន្លឺ (Super Admin)',
+    nameEn: 'PUNLEU (Admin)',
     roleTitleKh: 'អ្នកគ្រប់គ្រងជាន់ខ្ពស់ (Super Admin)',
     descriptionKh: 'សិទ្ធិពេញលេញលើកិច្ចការ អ្នកប្រើប្រាស់ RBAC និង Cloud DB',
     avatarColor: 'from-rose-500 to-indigo-600',
     avatarInitial: 'ព',
-  },
-  {
-    role: 'manager',
-    email: 'sokha@taskmate.kh',
-    password: 'manager123',
-    nameKh: 'សុខា គង់',
-    nameEn: 'Sokha Kong',
-    roleTitleKh: 'អ្នកចាត់ការទូទៅ (Project Manager)',
-    descriptionKh: 'ចាត់តាំងកិច្ចការ តាមដានវឌ្ឍនភាពក្រុម និង Cloud DB',
-    avatarColor: 'from-indigo-500 to-cyan-500',
-    avatarInitial: 'ស',
-  },
-  {
-    role: 'member',
-    email: 'bopha@taskmate.kh',
-    password: 'member123',
-    nameKh: 'បុប្ផា សេង',
-    nameEn: 'Bopha Seng',
-    roleTitleKh: 'សមាជិកក្រុមការងារ (Team Member)',
-    descriptionKh: 'ផ្ដោតលើកិច្ចការផ្ទាល់ខ្លួន (Personal Tasks) & ម៉ោងផ្ដោតអារម្មណ៍',
-    avatarColor: 'from-emerald-500 to-teal-600',
-    avatarInitial: 'ប',
-  },
-  {
-    role: 'viewer',
-    email: 'dara@taskmate.kh',
-    password: 'viewer123',
-    nameKh: 'ដារ៉ា ហេង',
-    nameEn: 'Dara Heng',
-    roleTitleKh: 'អ្នកមើល / ភ្ញៀវ (Viewer / Guest)',
-    descriptionKh: 'មានសិទ្ធិមើលកិច្ចការ និងស្ថិតិប៉ុណ្ណោះ (Read-Only Mode)',
-    avatarColor: 'from-slate-500 to-slate-700',
-    avatarInitial: 'ដ',
   },
 ];
 
@@ -619,14 +488,14 @@ export function verifyUserLogin(
   const cleanPass = (pass || '').trim();
 
   if (!cleanId || !cleanPass) {
-    return { success: false, message: 'សូមបញ្ចូលអ៊ីមែល ឬឈ្មោះគណនី និងពាក្យសម្ងាត់' };
+    return { success: false, message: 'សូមបញ្ចូលអ៊ីមែល ឬឈ្មោះគណនី និងពាក្យសម្ងាត់ឱ្យបានត្រឹមត្រូវ' };
   }
 
-  // Combine passed users list with LocalStorage & INITIAL_USERS to ensure all newly created accounts resolve immediately
+  // Combine passed users list with LocalStorage & INITIAL_USERS to ensure accounts resolve correctly
   const pool: UserAccount[] = [];
   const seenIds = new Set<string>();
 
-  // 1. Add users from parameter
+  // 1. Add users from parameter (most current live users from memory or database)
   (Array.isArray(usersList) ? usersList : []).forEach((u) => {
     if (u && u.id && !seenIds.has(u.id)) {
       seenIds.add(u.id);
@@ -662,64 +531,50 @@ export function verifyUserLogin(
     }
   });
 
-  // Alias lookup helpers for convenient and fast login matching
-  const roleAliases: Record<string, string> = {
-    admin: 'admin@taskmate.kh',
-    'admin@taskmate.kh': 'admin@taskmate.kh',
-    'admin@company.com': 'admin@taskmate.kh',
-    superadmin: 'admin@taskmate.kh',
-    punleu: 'admin@taskmate.kh',
-    sunpunleu: 'admin@taskmate.kh',
-    'sunpunleu168@gmail.com': 'admin@taskmate.kh',
-    'sopheaktra.chan@company.com': 'admin@taskmate.kh',
-    sopheaktra: 'admin@taskmate.kh',
-    manager: 'sokha@taskmate.kh',
-    'manager@taskmate.kh': 'sokha@taskmate.kh',
-    'chariya.kong@company.com': 'sokha@taskmate.kh',
-    sokha: 'sokha@taskmate.kh',
-    chariya: 'sokha@taskmate.kh',
-    pm: 'sokha@taskmate.kh',
-    member: 'bopha@taskmate.kh',
-    'member@taskmate.kh': 'bopha@taskmate.kh',
-    'rattana.seng@company.com': 'bopha@taskmate.kh',
-    'vicheka.mao@company.com': 'vicheka.mao@company.com',
-    bopha: 'bopha@taskmate.kh',
-    rattana: 'bopha@taskmate.kh',
-    vicheka: 'vicheka.mao@company.com',
-    user: 'bopha@taskmate.kh',
-    viewer: 'dara@taskmate.kh',
-    'viewer@taskmate.kh': 'dara@taskmate.kh',
-    'sreypich.heng@company.com': 'dara@taskmate.kh',
-    dara: 'dara@taskmate.kh',
-    sreypich: 'dara@taskmate.kh',
-    guest: 'dara@taskmate.kh',
-  };
+  // Strict Account Lookup (Exact Matching Hierarchy)
+  // 1st Priority: Exact email match
+  let user = pool.find(
+    (u) => u && u.email && u.email.trim().toLowerCase() === cleanId
+  );
 
-  const targetEmail = roleAliases[cleanId] || cleanId;
-  const usernamePart = cleanId.split('@')[0];
-
-  const user = pool.find((u) => {
-    if (!u) return false;
-    const uEmail = (u.email || '').toLowerCase();
-    const uName = (u.name || '').toLowerCase();
-    const uKhmer = (u.khmerName || '').toLowerCase();
-    const uUsername = uEmail.split('@')[0];
-
-    return (
-      uEmail === targetEmail ||
-      uEmail === cleanId ||
-      uEmail.includes(cleanId) ||
-      uUsername === cleanId ||
-      uUsername === usernamePart ||
-      uName === cleanId ||
-      uName.includes(cleanId) ||
-      uKhmer === cleanId ||
-      uKhmer.includes(cleanId) ||
-      u.role === cleanId ||
-      u.role === targetEmail
+  // 2nd Priority: Exact username (part before @)
+  if (!user) {
+    user = pool.find(
+      (u) =>
+        u &&
+        u.email &&
+        u.email.split('@')[0].trim().toLowerCase() === cleanId
     );
-  });
+  }
 
+  // 3rd Priority: Exact Latin name or Khmer name match
+  if (!user) {
+    user = pool.find(
+      (u) =>
+        u &&
+        ((u.name && u.name.trim().toLowerCase() === cleanId) ||
+         (u.khmerName && u.khmerName.trim().toLowerCase() === cleanId))
+    );
+  }
+
+  // 4th Priority: Phone number match (ignoring spaces/dashes)
+  if (!user) {
+    const rawDigits = cleanId.replace(/\D/g, '');
+    if (rawDigits.length >= 4) {
+      user = pool.find((u) => {
+        if (!u || !u.phone) return false;
+        const uDigits = u.phone.replace(/\D/g, '');
+        return uDigits && (uDigits === rawDigits || uDigits.endsWith(rawDigits));
+      });
+    }
+  }
+
+  // 5th Priority: User ID match
+  if (!user) {
+    user = pool.find((u) => u && u.id && u.id.trim().toLowerCase() === cleanId);
+  }
+
+  // If no matching account is found, reject
   if (!user) {
     return {
       success: false,
@@ -727,33 +582,34 @@ export function verifyUserLogin(
     };
   }
 
+  // Check if the user is inactive
   if (user.status === 'inactive') {
-    return { success: false, message: 'គណនីនេះត្រូវបានផ្អាកដំណើរការជាបណ្តោះអាសន្ន' };
-  }
-
-  // Accepted passwords: user's stored password, role default passwords, or general fallback
-  const userStoredPassword = (user.password || '').trim();
-  const isDirectPasswordMatch = userStoredPassword && userStoredPassword === cleanPass;
-
-  const allowedFallbackPasswords = new Set<string>([
-    userStoredPassword,
-    'admin123',
-    'manager123',
-    'mgr123',
-    'member123',
-    'viewer123',
-    'password123',
-    '123456',
-    'pass123',
-    'admin',
-    'manager',
-  ]);
-
-  if (!isDirectPasswordMatch && !allowedFallbackPasswords.has(cleanPass)) {
     return {
       success: false,
-      message: 'ពាក្យសម្ងាត់មិនត្រឹមត្រូវទេ! សូមពិនិត្យពាក្យសម្ងាត់របស់អ្នកម្តងទៀត',
+      message: 'គណនីនេះត្រូវបានផ្អាកដំណើរការជាបណ្តោះអាសន្ន។ សូមទាក់ទង Super Admin',
     };
+  }
+
+  // Strict Password Verification
+  const userStoredPassword = (user.password || '').trim();
+
+  // If a password is set on the user account, verify match
+  if (userStoredPassword) {
+    if (cleanPass !== userStoredPassword) {
+      return {
+        success: false,
+        message: 'ពាក្យសម្ងាត់មិនត្រឹមត្រូវទេ! សូមពិនិត្យពាក្យសម្ងាត់របស់អ្នកម្តងទៀត',
+      };
+    }
+  } else {
+    // Fallback for accounts without explicit password: allow standard defaults
+    const validDefaults = ['123', '123456', 'manager123', 'member123', 'viewer123'];
+    if (!validDefaults.includes(cleanPass)) {
+      return {
+        success: false,
+        message: 'ពាក្យសម្ងាត់មិនត្រឹមត្រូវទេ! សូមពិនិត្យពាក្យសម្ងាត់របស់អ្នកម្តងទៀត (Default: 123456)',
+      };
+    }
   }
 
   return { success: true, user };

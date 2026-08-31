@@ -14,7 +14,23 @@ const DEFAULT_ANON_KEY = 'sb_publishable_rJKxJgQMNVV30FL0o4_S3w_hNdajzYw';
 
 const metaEnv = typeof import.meta !== 'undefined' ? (import.meta as any).env || {} : {};
 
-export function getEffectiveSupabaseConfig(): { url: string; key: string } {
+export function isCustomSupabaseConfigured(): boolean {
+  try {
+    const customUrl = localStorage.getItem(SUPABASE_STORAGE_KEYS.CUSTOM_URL);
+    const customKey = localStorage.getItem(SUPABASE_STORAGE_KEYS.CUSTOM_KEY);
+    if (customUrl && customKey && customUrl.trim() && customKey.trim()) {
+      return true;
+    }
+  } catch {
+    // Ignore
+  }
+  if (metaEnv.VITE_SUPABASE_URL && metaEnv.VITE_SUPABASE_ANON_KEY) {
+    return true;
+  }
+  return false;
+}
+
+export function getEffectiveSupabaseConfig(): { url: string; key: string; isCustom: boolean } {
   let customUrl = '';
   let customKey = '';
   try {
@@ -24,9 +40,10 @@ export function getEffectiveSupabaseConfig(): { url: string; key: string } {
     // Ignore localStorage errors
   }
 
+  const isCustom = Boolean((customUrl && customKey) || (metaEnv.VITE_SUPABASE_URL && metaEnv.VITE_SUPABASE_ANON_KEY));
   const url = (customUrl || metaEnv.VITE_SUPABASE_URL || DEFAULT_SUPABASE_URL).trim();
   const key = (customKey || metaEnv.VITE_SUPABASE_ANON_KEY || DEFAULT_ANON_KEY).trim();
-  return { url, key };
+  return { url, key, isCustom };
 }
 
 export let supabase: SupabaseClient | null = null;
@@ -34,8 +51,8 @@ export let supabase: SupabaseClient | null = null;
 export function initSupabaseClient(customUrl?: string, customKey?: string): SupabaseClient | null {
   try {
     const config = getEffectiveSupabaseConfig();
-    const targetUrl = (customUrl || config.url).trim();
-    const targetKey = (customKey || config.key).trim();
+    const targetUrl = (customUrl !== undefined ? customUrl : config.url).trim();
+    const targetKey = (customKey !== undefined ? customKey : config.key).trim();
 
     if (targetUrl && targetKey) {
       supabase = createClient(targetUrl, targetKey, {
@@ -49,6 +66,7 @@ export function initSupabaseClient(customUrl?: string, customKey?: string): Supa
   } catch (err) {
     console.warn('Failed to initialize Supabase client:', err);
   }
+  supabase = null;
   return null;
 }
 
@@ -491,8 +509,16 @@ export async function testSupabaseHealthCheck(): Promise<DbHealthReport> {
     rolePermissionsTableOk: false,
   };
 
+  // Re-verify client instance
   if (!supabase) {
-    report.errorMessage = 'Supabase Client មិនទាន់ត្រូវបាន Initialize ទេ';
+    initSupabaseClient();
+  }
+
+  if (!supabase) {
+    const isCustom = isCustomSupabaseConfigured();
+    report.errorMessage = isCustom
+      ? 'មិនអាចបង្កើតការតភ្ជាប់ Supabase Client បានទេ (សូមពិនិត្យមើលទម្រង់ Project URL និង Key)'
+      : 'មិនទាន់បានកំណត់ API Credentials ផ្ទាល់ខ្លួននៅឡើយ។ សូមចូលទៅកាន់ផ្ទាំង "ការកំណត់ API Credentials" ដើម្បីភ្ជាប់។';
     return report;
   }
 
@@ -521,11 +547,22 @@ export async function testSupabaseHealthCheck(): Promise<DbHealthReport> {
 
     report.connected = report.tasksTableOk || report.usersTableOk || report.streakTableOk;
 
-    if (!report.connected && (tasksErr || usersErr)) {
-      report.errorMessage = tasksErr?.message || usersErr?.message || 'មិនអាចទាក់ទង Supabase បានទេ';
+    if (!report.connected) {
+      const errMessage = tasksErr?.message || usersErr?.message || streakErr?.message || '';
+      if (errMessage.includes('relation') || errMessage.includes('does not exist') || errMessage.includes('42P01')) {
+        report.errorMessage = 'តារាងមិនទាន់ត្រូវបានបង្កើតក្នុង Supabase ទេ។ សូម Copy កូដ SQL ពីផ្ទាំង "SQL Script" យកទៅ Run ក្នុង Supabase Dashboard > SQL Editor';
+      } else if (errMessage.includes('Failed to fetch') || errMessage.includes('NetworkError') || errMessage.includes('fetch')) {
+        report.errorMessage = 'មិនអាចទាក់ទង Supabase Server បានទេ (សូមពិនិត្យមើល URL & Key ឬការតភ្ជាប់ Internet ក្នុងផ្ទាំង "ការកំណត់ API Credentials")';
+      } else if (errMessage.includes('JWT') || errMessage.includes('apikey') || errMessage.includes('Invalid API key') || errMessage.includes('unauthorized')) {
+        report.errorMessage = 'Anon Key មិនត្រឹមត្រូវ។ សូមចម្លង anon public key ពី Supabase Project Settings > API មកដាក់ក្នុងផ្ទាំង "ការកំណត់ API Credentials"';
+      } else if (errMessage) {
+        report.errorMessage = `បញ្ហា៖ ${errMessage}`;
+      } else if (!isCustomSupabaseConfigured()) {
+        report.errorMessage = 'សូមបញ្ចូល Project URL និង Anon Key ផ្ទាល់ខ្លួនរបស់អ្នកក្នុងផ្ទាំង "ការកំណត់ API Credentials" រួច Run SQL Script ក្នុង Supabase Dashboard';
+      }
     }
   } catch (err: any) {
-    report.errorMessage = err.message || 'Error occurred while checking Supabase health';
+    report.errorMessage = err.message || 'មានបញ្ហាក្នុងការពិនិត្យស្ថានភាព Supabase Database';
   }
 
   return report;

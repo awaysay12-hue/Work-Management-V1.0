@@ -92,7 +92,7 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
   const sqlSchema = `-- =========================================================================
 -- TASKMATE KHMER PRO - COMPLETE DATABASE INITIALIZATION SCRIPT FOR SUPABASE
 -- =========================================================================
--- Copy and run this script in Supabase Dashboard -> SQL Editor
+-- Copy and run this script in Supabase Dashboard -> SQL Editor (New Query)
 
 -- 1. TASKS TABLE (កិច្ចការ និងភារកិច្ច)
 create table if not exists public.tasks (
@@ -169,14 +169,14 @@ create table if not exists public.role_permissions (
   updated_at text not null default now()::text
 );
 
--- CREATE INDEXES FOR FAST QUERYING
+-- 6. CREATE INDEXES FOR FAST QUERYING
 create index if not exists idx_tasks_due_date on public.tasks(due_date);
 create index if not exists idx_tasks_assignee on public.tasks(assignee_id);
 create index if not exists idx_tasks_completed on public.tasks(completed);
 create index if not exists idx_users_email on public.users(email);
 create index if not exists idx_activity_logs_time on public.activity_logs(timestamp desc);
 
--- ENABLE ROW LEVEL SECURITY (RLS) & ALLOW ACCESS
+-- 7. ENABLE ROW LEVEL SECURITY (RLS) & ALLOW ACCESS
 alter table public.tasks enable row level security;
 drop policy if exists "Public tasks access" on public.tasks;
 create policy "Public tasks access" on public.tasks for all using (true) with check (true);
@@ -196,6 +196,44 @@ create policy "Public logs access" on public.activity_logs for all using (true) 
 alter table public.role_permissions enable row level security;
 drop policy if exists "Public role permissions access" on public.role_permissions;
 create policy "Public role permissions access" on public.role_permissions for all using (true) with check (true);
+
+-- 8. ENABLE REALTIME SYNC (ALLOW REALTIME BROADCAST ACROSS DEVICES)
+do $$
+begin
+  if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = 'tasks') then
+    alter publication supabase_realtime add table public.tasks;
+  end if;
+  if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = 'users') then
+    alter publication supabase_realtime add table public.users;
+  end if;
+  if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = 'activity_logs') then
+    alter publication supabase_realtime add table public.activity_logs;
+  end if;
+exception
+  when others then null;
+end $$;
+
+-- 9. SEED DEFAULT SUPER ADMIN ACCOUNT
+insert into public.users (id, name, khmer_name, email, password, phone, role, department, avatar_color, avatar_initial, avatar_url, status, joined_date)
+values
+  ('user-admin-1', 'PUNLEU (Admin)', 'ពន្លឺ (Super Admin)', 'sunpunleu168@gmail.com', '123', '012 000 000', 'admin', 'បច្ចេកវិទ្យា & IT', 'from-rose-500 to-indigo-600', 'ព', 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200&auto=format&fit=crop&q=80', 'active', now()::text)
+on conflict (id) do update set
+  email = excluded.email,
+  password = excluded.password,
+  khmer_name = excluded.khmer_name,
+  role = excluded.role;
+
+-- 10. SEED DEFAULT ROLE PERMISSIONS
+insert into public.role_permissions (id, matrix, updated_at)
+values ('matrix', '{
+  "admin": {"canCreateTask": true, "canEditTask": true, "canDeleteTask": true, "canAssignTask": true, "canCompleteTask": true, "canManageUsers": true, "canExportData": true, "canImportData": true, "canSyncCloud": true},
+  "manager": {"canCreateTask": true, "canEditTask": true, "canDeleteTask": true, "canAssignTask": true, "canCompleteTask": true, "canManageUsers": false, "canExportData": true, "canImportData": true, "canSyncCloud": true},
+  "member": {"canCreateTask": true, "canEditTask": true, "canDeleteTask": false, "canAssignTask": false, "canCompleteTask": true, "canManageUsers": false, "canExportData": true, "canImportData": false, "canSyncCloud": false},
+  "viewer": {"canCreateTask": false, "canEditTask": false, "canDeleteTask": false, "canAssignTask": false, "canCompleteTask": false, "canManageUsers": false, "canExportData": true, "canImportData": false, "canSyncCloud": false}
+}'::jsonb, now()::text)
+on conflict (id) do update set
+  matrix = excluded.matrix,
+  updated_at = now()::text;
 `;
 
   const handleCopySql = () => {
@@ -348,30 +386,30 @@ create policy "Public role permissions access" on public.role_permissions for al
             <div className="space-y-4">
               {/* Status Header */}
               <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-2.5">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between flex-wrap gap-2">
                   <span className="text-xs font-bold text-slate-600 uppercase tracking-wide">
                     ស្ថានភាពតភ្ជាប់ទូទៅ (Global Connection)
                   </span>
                   <div className="flex items-center gap-1.5">
-                    {syncStatus === 'synced' && (
+                    {healthReport?.connected || syncStatus === 'synced' ? (
                       <span className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-700 bg-emerald-100 px-3 py-1 rounded-full border border-emerald-200">
                         <CheckCircle2 className="w-3.5 h-3.5" /> ភ្ជាប់ជោគជ័យ (Cloud Connected)
                       </span>
-                    )}
-                    {syncStatus === 'syncing' && (
+                    ) : syncStatus === 'syncing' || isCheckingHealth ? (
                       <span className="inline-flex items-center gap-1.5 text-xs font-bold text-indigo-700 bg-indigo-100 px-3 py-1 rounded-full border border-indigo-200">
-                        <RefreshCw className="w-3.5 h-3.5 animate-spin" /> កំពុងដំណើរការ Sync...
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" /> កំពុងពិនិត្យការតភ្ជាប់...
                       </span>
-                    )}
-                    {syncStatus === 'error' && (
-                      <span className="inline-flex items-center gap-1.5 text-xs font-bold text-rose-700 bg-rose-100 px-3 py-1 rounded-full border border-rose-200">
-                        <AlertCircle className="w-3.5 h-3.5" /> ត្រូវការបង្កើត Table ក្នុង Supabase
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-800 bg-amber-100 px-3 py-1 rounded-full border border-amber-200">
+                        <AlertCircle className="w-3.5 h-3.5" /> តម្រូវការកំណត់ Credentials & Tables
                       </span>
                     )}
                   </div>
                 </div>
 
-                <p className="text-xs text-slate-700 leading-relaxed font-medium">{syncMessage}</p>
+                <p className="text-xs text-slate-700 leading-relaxed font-medium">
+                  {healthReport?.errorMessage || syncMessage}
+                </p>
 
                 {opMessage && (
                   <div className="mt-2 text-xs font-bold p-3 bg-indigo-50 text-indigo-800 rounded-xl border border-indigo-200 flex items-center gap-2">
@@ -380,6 +418,51 @@ create policy "Public role permissions access" on public.role_permissions for al
                   </div>
                 )}
               </div>
+
+              {/* Quick Setup Recommendation Banner when not fully connected */}
+              {(!healthReport?.connected || !healthReport?.tasksTableOk) && (
+                <div className="bg-gradient-to-br from-indigo-50 to-emerald-50 border border-indigo-200/80 rounded-2xl p-4 space-y-3">
+                  <div className="flex items-start gap-2.5">
+                    <Sparkles className="w-5 h-5 text-indigo-600 shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <h4 className="text-xs font-bold text-slate-900">
+                        របៀបរៀបចំ Supabase Database ឱ្យដំណើរការ ១០០%៖
+                      </h4>
+                      <p className="text-[11px] text-slate-600 leading-relaxed">
+                        អនុវត្តតែ ២ ជំហានងាយៗដើម្បីឱ្យទិន្នន័យ Sync ឆ្លងកាត់ឧបករណ៍ (PC & ទូរស័ព្ទ) ដោយស្វ័យប្រវត្តិ៖
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                    <button
+                      onClick={() => setActiveTab('config')}
+                      className="flex items-center justify-between p-3 rounded-xl bg-white border border-indigo-200 hover:border-indigo-400 hover:shadow-xs transition-all text-left cursor-pointer group"
+                    >
+                      <div>
+                        <span className="text-[10px] font-bold text-indigo-600 uppercase">ជំហានទី ១</span>
+                        <p className="text-xs font-bold text-slate-800 group-hover:text-indigo-600 transition-colors">
+                          បញ្ចូល Project URL & Anon Key
+                        </p>
+                      </div>
+                      <KeyRound className="w-4 h-4 text-indigo-500 group-hover:translate-x-0.5 transition-transform" />
+                    </button>
+
+                    <button
+                      onClick={() => setActiveTab('sql')}
+                      className="flex items-center justify-between p-3 rounded-xl bg-white border border-emerald-200 hover:border-emerald-400 hover:shadow-xs transition-all text-left cursor-pointer group"
+                    >
+                      <div>
+                        <span className="text-[10px] font-bold text-emerald-600 uppercase">ជំហានទី ២</span>
+                        <p className="text-xs font-bold text-slate-800 group-hover:text-emerald-600 transition-colors">
+                          ចម្លង SQL យកទៅ Run ក្នុង Supabase
+                        </p>
+                      </div>
+                      <Copy className="w-4 h-4 text-emerald-500 group-hover:translate-x-0.5 transition-transform" />
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Table Diagnostics Card */}
               <div className="border border-slate-200 rounded-2xl p-4 space-y-3 bg-white shadow-2xs">
@@ -455,18 +538,6 @@ create policy "Public role permissions access" on public.role_permissions for al
                     )}
                   </div>
                 </div>
-
-                {healthReport && !healthReport.connected && (
-                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-xs flex items-start gap-2">
-                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                    <div>
-                      <p className="font-bold">ការណែនាំ៖</p>
-                      <p className="text-[11px] text-amber-700 mt-0.5">
-                        សូមចូលទៅកាន់ផ្ទាំង <strong>"SQL Script បង្កើត Tables"</strong> រួច Copy កូដ SQL យកទៅ Run ក្នុង Supabase Dashboard ដើម្បីបង្កើត Tables ទាំងអស់នេះដោយស្វ័យប្រវត្តិ។
-                      </p>
-                    </div>
-                  </div>
-                )}
               </div>
 
               {/* Data Migration Push/Pull Actions */}
@@ -537,17 +608,39 @@ create policy "Public role permissions access" on public.role_permissions for al
           {activeTab === 'config' && (
             <div className="space-y-4">
               <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
-                <h3 className="text-xs font-bold text-slate-800 flex items-center gap-2">
-                  <Server className="w-4 h-4 text-indigo-600" />
-                  <span>ព័ត៌មានគណនី Supabase Project ផ្ទាល់ខ្លួន</span>
-                </h3>
-                <p className="text-[11px] text-slate-600 leading-relaxed">
-                  អ្នកអាចបញ្ចូល Project URL និង Anon Publishable Key នៃ Supabase Project ផ្ទាល់ខ្លួនរបស់អ្នកនៅទីនេះបាន។ ប្រសិនបើទុកចោល ប្រព័ន្ធនឹងប្រើប្រាស់ Default Project។
-                </p>
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-bold text-slate-800 flex items-center gap-2">
+                    <Server className="w-4 h-4 text-indigo-600" />
+                    <span>ព័ត៌មានគណនី Supabase Project ផ្ទាល់ខ្លួន (Free Tier)</span>
+                  </h3>
+                  <span className="text-[10px] bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-bold">
+                    Settings ➔ API
+                  </span>
+                </div>
+
+                <div className="bg-white border border-slate-200 rounded-xl p-3 text-xs text-slate-600 space-y-1.5 leading-relaxed">
+                  <p className="font-bold text-slate-800 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-amber-500" /> របៀបស្វែងរក Credentials ក្នុង Supabase៖
+                  </p>
+                  <ol className="list-decimal list-inside space-y-1 text-[11px] text-slate-600 pl-1">
+                    <li>
+                      ចូលទៅកាន់ <a href="https://supabase.com/dashboard" target="_blank" rel="noopener noreferrer" className="text-indigo-600 font-bold underline">supabase.com/dashboard</a> រួចបើក Project របស់អ្នក
+                    </li>
+                    <li>
+                      ចូលទៅកាន់ <strong>Project Settings</strong> (រូបកង់ធ្មេញ) ➔ ជ្រើសរើសម៉ឺនុយ <strong>API</strong>
+                    </li>
+                    <li>
+                      ចម្លង <strong>Project URL</strong> (ឧ. <code className="bg-slate-100 px-1 py-0.5 rounded font-mono text-slate-800">https://abcdefg.supabase.co</code>)
+                    </li>
+                    <li>
+                      ចម្លង <strong>anon public API key</strong> (ជាកូដ <code className="bg-slate-100 px-1 py-0.5 rounded font-mono text-slate-800">eyJhbGci...</code>)
+                    </li>
+                  </ol>
+                </div>
 
                 {configSavedMessage && (
                   <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs font-bold flex items-center gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
                     <span>{configSavedMessage}</span>
                   </div>
                 )}
@@ -555,34 +648,34 @@ create policy "Public role permissions access" on public.role_permissions for al
                 <div className="space-y-3 pt-1">
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Project URL (e.g. https://xyzcompany.supabase.co)
+                      Project URL (e.g. https://your-project.supabase.co)
                     </label>
                     <input
                       type="text"
                       value={customUrl}
                       onChange={(e) => setCustomUrl(e.target.value)}
-                      placeholder={SUPABASE_URL}
+                      placeholder={SUPABASE_URL || 'https://your-id.supabase.co'}
                       className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-xs font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                     />
                   </div>
 
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Anon Publishable Key (sb_publishable_...)
+                      Anon Public API Key (eyJhbGci...)
                     </label>
                     <input
                       type="password"
                       value={customKey}
                       onChange={(e) => setCustomKey(e.target.value)}
-                      placeholder="បញ្ចូល Anon Key របស់អ្នក..."
+                      placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
                       className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-xs font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                     />
                   </div>
 
-                  <div className="flex items-center gap-2.5 pt-2">
+                  <div className="flex items-center gap-2.5 pt-2 flex-wrap">
                     <button
                       onClick={handleSaveCustomConfig}
-                      className="flex items-center gap-1.5 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-600/20 cursor-pointer"
+                      className="flex items-center gap-1.5 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-600/20 cursor-pointer transition-all"
                     >
                       <Save className="w-3.5 h-3.5" />
                       <span>រក្សាទុក & ភ្ជាប់ឡើងវិញ</span>
@@ -592,10 +685,24 @@ create policy "Public role permissions access" on public.role_permissions for al
                       className="flex items-center gap-1.5 px-3 py-2.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-xs font-bold cursor-pointer transition-colors"
                     >
                       <RotateCcw className="w-3.5 h-3.5" />
-                      <span>កំណត់ទៅ Default វិញ</span>
+                      <span>កំណត់ឡើងវិញ (Clear)</span>
                     </button>
                   </div>
                 </div>
+              </div>
+
+              {/* Next step hint */}
+              <div className="p-3.5 bg-emerald-50/80 border border-emerald-200 rounded-xl text-xs text-emerald-900 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>បន្ទាប់ពីរៀបចំរួច សូមចូលទៅកាន់ផ្ទាំង <strong>"SQL Script បង្កើត Tables"</strong> ដើម្បី Run កូដក្នុង Supabase SQL Editor។</span>
+                </div>
+                <button
+                  onClick={() => setActiveTab('sql')}
+                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-[11px] shrink-0 cursor-pointer shadow-xs"
+                >
+                  មើល SQL Script ➔
+                </button>
               </div>
             </div>
           )}

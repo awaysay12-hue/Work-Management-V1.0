@@ -95,11 +95,20 @@ export default function App() {
     return getInitialStreak();
   });
 
+  // Legacy mock IDs to prune so system starts fresh with only Super Admin and newly enrolled users
+  const LEGACY_MOCK_USER_IDS = new Set(['user-mgr-1', 'user-mem-1', 'user-mem-2', 'user-view-1']);
+
   // User Management & RBAC States
   const [users, setUsers] = useState<UserAccount[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.USERS);
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed: UserAccount[] = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          const cleaned = parsed.filter((u) => u && u.id && !LEGACY_MOCK_USER_IDS.has(u.id));
+          if (cleaned.length > 0) return cleaned;
+        }
+      }
     } catch {
       // Ignore
     }
@@ -111,11 +120,12 @@ export default function App() {
       const savedId = localStorage.getItem(STORAGE_KEYS.CURRENT_USER_ID);
       const savedUsersRaw = localStorage.getItem(STORAGE_KEYS.USERS);
       const usersList: UserAccount[] = savedUsersRaw ? JSON.parse(savedUsersRaw) : DEFAULT_USERS;
-      if (savedId) {
-        const found = usersList.find((u) => u.id === savedId) || DEFAULT_USERS.find((u) => u.id === savedId);
+      const validUsers = usersList.filter((u) => u && u.id && !LEGACY_MOCK_USER_IDS.has(u.id));
+      if (savedId && !LEGACY_MOCK_USER_IDS.has(savedId)) {
+        const found = validUsers.find((u) => u.id === savedId) || DEFAULT_USERS.find((u) => u.id === savedId);
         if (found) return found;
       }
-      if (usersList && usersList.length > 0) return usersList[0];
+      if (validUsers.length > 0) return validUsers[0];
     } catch {
       // Ignore
     }
@@ -363,17 +373,17 @@ export default function App() {
 
     // 1. Initial/Default seed users
     DEFAULT_USERS.forEach((u) => {
-      if (u && u.id) map.set(u.id, u);
+      if (u && u.id && !LEGACY_MOCK_USER_IDS.has(u.id)) map.set(u.id, u);
     });
 
-    // 2. Local users
+    // 2. Local users (skip legacy mock demo IDs)
     (Array.isArray(localUsers) ? localUsers : []).forEach((u) => {
-      if (u && u.id) map.set(u.id, u);
+      if (u && u.id && !LEGACY_MOCK_USER_IDS.has(u.id)) map.set(u.id, u);
     });
 
-    // 3. Remote Cloud users (highest authority)
+    // 3. Remote Cloud users (highest authority, skip legacy mock demo IDs)
     (Array.isArray(remoteUsers) ? remoteUsers : []).forEach((u) => {
-      if (u && u.id) map.set(u.id, u);
+      if (u && u.id && !LEGACY_MOCK_USER_IDS.has(u.id)) map.set(u.id, u);
     });
 
     return Array.from(map.values());
