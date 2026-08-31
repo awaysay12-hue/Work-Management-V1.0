@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { UserAccount } from '../types';
 import { verifyUserLogin } from '../utils/userPermissions';
+import { fetchUsersFromSupabase } from '../lib/supabase';
 import { soundFx } from '../utils/sound';
 
 interface AuthModalProps {
@@ -43,19 +44,53 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleSignIn = (e?: React.FormEvent) => {
+  const handleSignIn = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     setErrorMessage('');
     setSuccessMessage('');
     setIsLoading(true);
 
-    setTimeout(() => {
-      const result = verifyUserLogin(emailOrName, password, safeUsers);
+    try {
+      // 1. First attempt with local & passed users
+      let result = verifyUserLogin(emailOrName, password, safeUsers);
+
+      // 2. If not found locally, query Supabase Cloud Database directly in real-time
+      if (!result.success) {
+        try {
+          const { users: remoteUsers } = await fetchUsersFromSupabase();
+          if (remoteUsers && remoteUsers.length > 0) {
+            result = verifyUserLogin(emailOrName, password, remoteUsers);
+            if (result.success && result.user) {
+              // Update localStorage with fresh users list
+              try {
+                localStorage.setItem('taskmate_users', JSON.stringify(remoteUsers));
+                localStorage.setItem('kh_daily_users_data_v1', JSON.stringify(remoteUsers));
+              } catch {
+                // Ignore
+              }
+            }
+          }
+        } catch {
+          // Ignore network errors in fallback
+        }
+      }
+
       setIsLoading(false);
 
       if (result.success && result.user) {
         soundFx.playCelebration();
         setSuccessMessage(`ស្វាគមន៍ការត្រឡប់មកវិញ! សួស្តី ${result.user.khmerName}`);
+        
+        // Remember session in localStorage
+        try {
+          localStorage.setItem('taskmate_current_user_id', result.user.id);
+          localStorage.setItem('kh_daily_current_user_id_v1', result.user.id);
+          localStorage.setItem('taskmate_auth_authenticated', 'true');
+          localStorage.setItem('kh_daily_auth_authenticated_v1', 'true');
+        } catch {
+          // Ignore
+        }
+
         setTimeout(() => {
           onLoginSuccess(result.user!);
         }, 300);
@@ -63,7 +98,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         soundFx.playAlert();
         setErrorMessage(result.message || 'ការចូលប្រើប្រាស់មិនជោគជ័យ! សូមពិនិត្យអ៊ីមែល ឬពាក្យសម្ងាត់');
       }
-    }, 220);
+    } catch {
+      setIsLoading(false);
+      soundFx.playAlert();
+      setErrorMessage('មានបញ្ហាបច្ចេកទេសក្នុងការផ្ទៀងផ្ទាត់គណនី សូមសាកល្បងម្តងទៀត');
+    }
   };
 
   const content = (

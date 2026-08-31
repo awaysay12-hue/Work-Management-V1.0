@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Users,
   Shield,
@@ -30,6 +30,8 @@ import {
   Layers,
   Building,
   User as UserIcon,
+  RefreshCw,
+  Cloud,
 } from 'lucide-react';
 import {
   UserAccount,
@@ -67,6 +69,8 @@ interface UserManagementModalProps {
   activityLogs?: ActivityLog[];
   onClearLogs?: () => void;
   tasksCountByUser?: Record<string, number>;
+  onManualSync?: () => Promise<void>;
+  isSyncing?: boolean;
 }
 
 export const UserManagementModal: React.FC<UserManagementModalProps> = ({
@@ -84,6 +88,8 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
   activityLogs = [],
   onClearLogs,
   tasksCountByUser = {},
+  onManualSync,
+  isSyncing = false,
 }) => {
   const [activeTab, setActiveTab] = useState<'members' | 'roles' | 'logs'>('members');
   const [searchQuery, setSearchQuery] = useState('');
@@ -116,6 +122,13 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
 
   const [notificationMsg, setNotificationMsg] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Auto-sync users list from Supabase Cloud whenever modal is opened
+  useEffect(() => {
+    if (isOpen && onManualSync) {
+      onManualSync().catch(() => {});
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -499,13 +512,35 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
                   </select>
                 </div>
 
-                <button
-                  onClick={handleOpenAddForm}
-                  className="flex items-center justify-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>បន្ថែមគណនីថ្មី</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  {onManualSync && (
+                    <button
+                      onClick={async () => {
+                        soundFx.playClick();
+                        try {
+                          await onManualSync();
+                          showNotification('បានធ្វើសមកាលកម្មទិន្នន័យពី Cloud Database រួចរាល់');
+                        } catch {
+                          showNotification('មិនអាចទាញទិន្នន័យពី Cloud បានទេ សូមពិនិត្យ Connection');
+                        }
+                      }}
+                      disabled={isSyncing}
+                      className="flex items-center justify-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all border border-slate-200 cursor-pointer disabled:opacity-50"
+                      title="ទាញយកបញ្ជីគណនីថ្មីៗបំផុតពី Cloud Database"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin text-indigo-600' : 'text-slate-500'}`} />
+                      <span className="hidden sm:inline">{isSyncing ? 'កំពុង Sync...' : 'Sync Cloud'}</span>
+                    </button>
+                  )}
+
+                  <button
+                    onClick={handleOpenAddForm}
+                    className="flex items-center justify-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>បន្ថែមគណនីថ្មី</span>
+                  </button>
+                </div>
               </div>
 
               {/* User List Table */}
@@ -938,15 +973,19 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
 
                   <div>
                     <label className="text-xs font-bold text-slate-700 block mb-1">
-                      ពាក្យសម្ងាត់ (Password)
+                      ពាក្យសម្ងាត់សម្រាប់ Login (Password) <span className="text-rose-500">*</span>
                     </label>
                     <input
                       type="text"
-                      placeholder="ពាក្យសម្ងាត់គណនី (ឧ. 123456)..."
+                      required
+                      placeholder="កំណត់ពាក្យសម្ងាត់ (ឧ. 123456 ឬ pass123)..."
                       value={formPassword}
                       onChange={(e) => setFormPassword(e.target.value)}
-                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-medium focus:outline-hidden focus:border-indigo-600"
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-medium focus:outline-hidden focus:border-indigo-600 font-mono"
                     />
+                    <p className="text-[10px] text-slate-500 mt-1">
+                      💡 គណនីថ្មីនេះអាចយក Password នេះ និង Email ខាងលើដើម្បី Login ចូលប្រព័ន្ធភ្លាមៗ
+                    </p>
                   </div>
 
                   <div>

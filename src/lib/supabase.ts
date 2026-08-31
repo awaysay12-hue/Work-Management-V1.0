@@ -285,12 +285,12 @@ export async function deleteUserFromSupabase(userId: string): Promise<{ success:
 }
 
 /* ==========================================================================
-   DAILY STREAK CONVERTERS & CRUD
+   DAILY STREAK CONVERTERS & CRUD (Per-User Scoped)
    ========================================================================== */
 
-export function streakToDbRow(streak: DailyStreak) {
+export function streakToDbRow(streak: DailyStreak, userId: string = 'main') {
   return {
-    id: 'main',
+    id: userId || 'main',
     current_streak: streak.currentStreak,
     longest_streak: streak.longestStreak,
     last_active_date: streak.lastActiveDate,
@@ -309,7 +309,7 @@ export function dbRowToStreak(row: any): DailyStreak {
   };
 }
 
-export async function fetchStreakFromSupabase(): Promise<{ streak: DailyStreak | null; error: Error | null }> {
+export async function fetchStreakFromSupabase(userId: string = 'main'): Promise<{ streak: DailyStreak | null; error: Error | null }> {
   if (!supabase) {
     return { streak: null, error: new Error('Supabase client not initialized') };
   }
@@ -317,7 +317,7 @@ export async function fetchStreakFromSupabase(): Promise<{ streak: DailyStreak |
     const { data, error } = await supabase
       .from('user_streak')
       .select('*')
-      .eq('id', 'main')
+      .eq('id', userId || 'main')
       .single();
 
     if (error && error.code !== 'PGRST116') {
@@ -330,12 +330,12 @@ export async function fetchStreakFromSupabase(): Promise<{ streak: DailyStreak |
   }
 }
 
-export async function saveStreakToSupabase(streak: DailyStreak): Promise<{ success: boolean; error: Error | null }> {
+export async function saveStreakToSupabase(streak: DailyStreak, userId: string = 'main'): Promise<{ success: boolean; error: Error | null }> {
   if (!supabase) {
     return { success: false, error: new Error('Supabase client not initialized') };
   }
   try {
-    const row = streakToDbRow(streak);
+    const row = streakToDbRow(streak, userId || 'main');
     const { error } = await supabase.from('user_streak').upsert(row);
     if (error) throw error;
     return { success: true, error: null };

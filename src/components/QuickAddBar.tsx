@@ -1,15 +1,16 @@
 import React, { useState } from 'react';
 import { Plus } from 'lucide-react';
-import { Task, TaskCategory } from '../types';
+import { Task, TaskCategory, UserAccount } from '../types';
 import { CATEGORIES_CONFIG } from '../utils/translations';
 import { getTodayDateString } from '../utils/khmerDates';
 import { soundFx } from '../utils/sound';
 
 interface QuickAddBarProps {
   onAddTask: (task: Task) => void;
+  currentUser?: UserAccount;
 }
 
-export const QuickAddBar: React.FC<QuickAddBarProps> = ({ onAddTask }) => {
+export const QuickAddBar: React.FC<QuickAddBarProps> = ({ onAddTask, currentUser }) => {
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState<TaskCategory>('work');
   const [dueTime, setDueTime] = useState('17:00');
@@ -19,6 +20,8 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({ onAddTask }) => {
     if (!title.trim()) return;
 
     const todayStr = getTodayDateString();
+    const isRegularMember = currentUser?.role === 'member' || currentUser?.role === 'viewer';
+
     const newTask: Task = {
       id: `task-${Date.now()}`,
       title: title.trim(),
@@ -34,6 +37,10 @@ export const QuickAddBar: React.FC<QuickAddBarProps> = ({ onAddTask }) => {
       tags: [],
       estimatedMinutes: 25,
       spentMinutes: 0,
+      creatorId: currentUser ? currentUser.id : undefined,
+      creatorName: currentUser ? (currentUser.khmerName || currentUser.name) : undefined,
+      assigneeId: isRegularMember && currentUser ? currentUser.id : undefined,
+      assigneeName: isRegularMember && currentUser ? (currentUser.khmerName || currentUser.name) : undefined,
     };
 
     soundFx.playClick();

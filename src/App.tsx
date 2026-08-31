@@ -225,6 +225,42 @@ export default function App() {
     }
   }, [currentUser]);
 
+  // Load per-user streak when currentUser switches
+  useEffect(() => {
+    if (!currentUser || !currentUser.id) return;
+    try {
+      const userStreakKey = `taskmate_streak_${currentUser.id}`;
+      const savedUserStreak = localStorage.getItem(userStreakKey);
+      if (savedUserStreak) {
+        setStreak(JSON.parse(savedUserStreak));
+      } else {
+        fetchStreakFromSupabase(currentUser.id)
+          .then((res) => {
+            if (res.streak) {
+              setStreak(res.streak);
+              localStorage.setItem(userStreakKey, JSON.stringify(res.streak));
+            } else {
+              setStreak(getInitialStreak());
+            }
+          })
+          .catch(() => {});
+      }
+    } catch {
+      // Ignore
+    }
+  }, [currentUser?.id]);
+
+  // Persist current active streak for this specific user
+  useEffect(() => {
+    if (!currentUser || !currentUser.id) return;
+    try {
+      localStorage.setItem(`taskmate_streak_${currentUser.id}`, JSON.stringify(streak));
+      localStorage.setItem(STORAGE_KEYS.STREAK, JSON.stringify(streak));
+    } catch {
+      // Ignore
+    }
+  }, [streak, currentUser?.id]);
+
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEYS.ROLE_PERMISSIONS, JSON.stringify(rolePermissions));
@@ -321,19 +357,52 @@ export default function App() {
     setIsAuthModalOpen(true);
   };
 
+  // Merge helper for user lists across devices and cloud
+  const mergeUserLists = (remoteUsers: UserAccount[], localUsers: UserAccount[]): UserAccount[] => {
+    const map = new Map<string, UserAccount>();
+
+    // 1. Initial/Default seed users
+    DEFAULT_USERS.forEach((u) => {
+      if (u && u.id) map.set(u.id, u);
+    });
+
+    // 2. Local users
+    (Array.isArray(localUsers) ? localUsers : []).forEach((u) => {
+      if (u && u.id) map.set(u.id, u);
+    });
+
+    // 3. Remote Cloud users (highest authority)
+    (Array.isArray(remoteUsers) ? remoteUsers : []).forEach((u) => {
+      if (u && u.id) map.set(u.id, u);
+    });
+
+    return Array.from(map.values());
+  };
+
   const handleSaveUser = (savedUser: UserAccount) => {
     soundFx.playClick();
     setUsers((prev) => {
       const exists = prev.some((u) => u.id === savedUser.id);
+      let updated: UserAccount[];
       if (exists) {
         logActivity('update_role', savedUser.khmerName, `បានកែប្រែគណនី៖ ${savedUser.khmerName}`);
-        return prev.map((u) => (u.id === savedUser.id ? savedUser : u));
+        updated = prev.map((u) => (u.id === savedUser.id ? savedUser : u));
+      } else {
+        logActivity('add_user', savedUser.khmerName, `បានបង្កើតគណនី៖ ${savedUser.khmerName} (${savedUser.role})`);
+        updated = [...prev, savedUser];
       }
-      logActivity('add_user', savedUser.khmerName, `បានបង្កើតគណនី៖ ${savedUser.khmerName} (${savedUser.role})`);
-      return [...prev, savedUser];
+
+      try {
+        localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updated));
+        localStorage.setItem('taskmate_users', JSON.stringify(updated));
+      } catch {
+        // Ignore
+      }
+
+      return updated;
     });
 
-    // Save to Supabase Cloud
+    // Save to Supabase Cloud immediately
     saveUserToSupabase(savedUser).catch((err) =>
       console.warn('Failed to save user to Supabase:', err)
     );
@@ -349,6 +418,14 @@ export default function App() {
     const userToDelete = users.find((u) => u.id === userId);
     const updatedUsers = users.filter((u) => u.id !== userId);
     setUsers(updatedUsers);
+
+    try {
+      localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
+      localStorage.setItem('taskmate_users', JSON.stringify(updatedUsers));
+    } catch {
+      // Ignore
+    }
+
     if (currentUser.id === userId) {
       if (updatedUsers.length > 0) {
         setCurrentUser(updatedUsers[0]);
@@ -388,7 +465,7 @@ export default function App() {
         const [tasksRes, usersRes, streakRes, logsRes, rbacRes] = await Promise.all([
           fetchTasksFromSupabase(),
           fetchUsersFromSupabase(),
-          fetchStreakFromSupabase(),
+          fetchStreakFromSupabase(currentUser?.id),
           fetchActivityLogsFromSupabase(),
           fetchRolePermissionsFromSupabase(),
         ]);
@@ -403,21 +480,30 @@ export default function App() {
           syncAllTasksToSupabase(tasks).catch(() => {});
         }
 
-        // 2. Sync Users
-        if (usersRes.users && usersRes.users.length > 0) {
-          setUsers(usersRes.users);
-          // Keep current logged-in user in sync
-          const matchedUser = usersRes.users.find((u) => u.id === currentUser.id);
-          if (matchedUser) setCurrentUser(matchedUser);
-        } else if (!usersRes.error && users.length > 0) {
-          syncAllUsersToSupabase(users).catch(() => {});
+        // 2. Sync Users (Merge seamlessly across devices)
+        const mergedUsers = mergeUserLists(usersRes.users || [], users);
+        setUsers(mergedUsers);
+        try {
+          localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(mergedUsers));
+          localStorage.setItem('taskmate_users', JSON.stringify(mergedUsers));
+        } catch {
+          // Ignore
         }
+
+        // If remote database had fewer users or was missing default accounts, push full list
+        if (!usersRes.error && (!usersRes.users || usersRes.users.length < mergedUsers.length)) {
+          syncAllUsersToSupabase(mergedUsers).catch(() => {});
+        }
+
+        // Keep current logged-in user in sync with updated profile
+        const matchedUser = mergedUsers.find((u) => u.id === currentUser.id);
+        if (matchedUser) setCurrentUser(matchedUser);
 
         // 3. Sync Streak
         if (streakRes.streak) {
           setStreak(streakRes.streak);
         } else if (!streakRes.error) {
-          saveStreakToSupabase(streak).catch(() => {});
+          saveStreakToSupabase(streak, currentUser?.id).catch(() => {});
         }
 
         // 4. Sync Activity Logs
@@ -439,7 +525,7 @@ export default function App() {
           setSupabaseSyncMessage('ត្រូវការ Run SQL Script ក្នុង Supabase Dashboard ដើម្បីបង្កើត Tables');
         } else {
           setSupabaseSyncStatus('synced');
-          setSupabaseSyncMessage(`បានធ្វើសមកាលកម្មទិន្នន័យ (${tasksRes.tasks?.length || tasks.length} កិច្ចការ, ${usersRes.users?.length || users.length} គណនី)`);
+          setSupabaseSyncMessage(`បានធ្វើសមកាលកម្មទិន្នន័យ (${tasksRes.tasks?.length || tasks.length} កិច្ចការ, ${mergedUsers.length} គណនី)`);
         }
       } catch (err: any) {
         if (!isMounted) return;
@@ -495,15 +581,33 @@ export default function App() {
                 const updatedUser = dbRowToUser(payload.new);
                 setUsers((prev) => {
                   const exists = prev.some((u) => u.id === updatedUser.id);
+                  let nextUsers: UserAccount[];
                   if (exists) {
-                    return prev.map((u) => (u.id === updatedUser.id ? updatedUser : u));
+                    nextUsers = prev.map((u) => (u.id === updatedUser.id ? updatedUser : u));
+                  } else {
+                    nextUsers = [...prev, updatedUser];
                   }
-                  return [...prev, updatedUser];
+                  try {
+                    localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(nextUsers));
+                    localStorage.setItem('taskmate_users', JSON.stringify(nextUsers));
+                  } catch {
+                    // Ignore
+                  }
+                  return nextUsers;
                 });
               } else if (payload.eventType === 'DELETE') {
                 const deletedId = payload.old?.id;
                 if (deletedId) {
-                  setUsers((prev) => prev.filter((u) => u.id !== String(deletedId)));
+                  setUsers((prev) => {
+                    const nextUsers = prev.filter((u) => u.id !== String(deletedId));
+                    try {
+                      localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(nextUsers));
+                      localStorage.setItem('taskmate_users', JSON.stringify(nextUsers));
+                    } catch {
+                      // Ignore
+                    }
+                    return nextUsers;
+                  });
                 }
               }
             }
@@ -514,8 +618,44 @@ export default function App() {
       console.warn('Realtime channels error:', err);
     }
 
+    // Auto-polling & Tab focus listener for multi-device sync
+    const handleWindowFocus = () => {
+      fetchUsersFromSupabase().then((res) => {
+        if (res.users && res.users.length > 0) {
+          setUsers((prev) => {
+            const merged = mergeUserLists(res.users!, prev);
+            try {
+              localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(merged));
+              localStorage.setItem('taskmate_users', JSON.stringify(merged));
+            } catch {
+              // Ignore
+            }
+            return merged;
+          });
+        }
+      }).catch(() => {});
+
+      fetchTasksFromSupabase().then((res) => {
+        if (res.tasks && res.tasks.length > 0) {
+          setTasks(res.tasks);
+        }
+      }).catch(() => {});
+    };
+
+    const pollingInterval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        handleWindowFocus();
+      }
+    }, 10000);
+
+    window.addEventListener('focus', handleWindowFocus);
+    document.addEventListener('visibilitychange', handleWindowFocus);
+
     return () => {
       isMounted = false;
+      clearInterval(pollingInterval);
+      window.removeEventListener('focus', handleWindowFocus);
+      document.removeEventListener('visibilitychange', handleWindowFocus);
       if (tasksChannel && supabase) {
         supabase.removeChannel(tasksChannel);
       }
@@ -528,28 +668,40 @@ export default function App() {
   // Manual Re-sync from Supabase
   const handleManualSync = async () => {
     setSupabaseSyncStatus('syncing');
-    setSupabaseSyncMessage('កំពុងផ្ទៀងផ្ទាត់ការតភ្ជាប់ Database...');
-    const [tasksRes, usersRes, streakRes] = await Promise.all([
-      fetchTasksFromSupabase(),
-      fetchUsersFromSupabase(),
-      fetchStreakFromSupabase(),
-    ]);
+    setSupabaseSyncMessage('កំពុងទាញទិន្នន័យពី Cloud Database...');
+    try {
+      const [tasksRes, usersRes, streakRes] = await Promise.all([
+        fetchTasksFromSupabase(),
+        fetchUsersFromSupabase(),
+        fetchStreakFromSupabase(currentUser?.id),
+      ]);
 
-    if (tasksRes.error || usersRes.error) {
+      if (tasksRes.error || usersRes.error) {
+        setSupabaseSyncStatus('error');
+        setSupabaseSyncMessage(`បញ្ហា៖ ${(tasksRes.error || usersRes.error)?.message}`);
+      } else {
+        if (tasksRes.tasks && tasksRes.tasks.length > 0) {
+          setTasks(tasksRes.tasks);
+        }
+        if (usersRes.users) {
+          const mergedUsers = mergeUserLists(usersRes.users, users);
+          setUsers(mergedUsers);
+          try {
+            localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(mergedUsers));
+            localStorage.setItem('taskmate_users', JSON.stringify(mergedUsers));
+          } catch {
+            // Ignore
+          }
+        }
+        if (streakRes.streak) {
+          setStreak(streakRes.streak);
+        }
+        setSupabaseSyncStatus('synced');
+        setSupabaseSyncMessage('បានធ្វើសមកាលកម្មជាមួយ Database ជោគជ័យ! ✅');
+      }
+    } catch (err: any) {
       setSupabaseSyncStatus('error');
-      setSupabaseSyncMessage(`បញ្ហា៖ ${(tasksRes.error || usersRes.error)?.message}`);
-    } else {
-      if (tasksRes.tasks && tasksRes.tasks.length > 0) {
-        setTasks(tasksRes.tasks);
-      }
-      if (usersRes.users && usersRes.users.length > 0) {
-        setUsers(usersRes.users);
-      }
-      if (streakRes.streak) {
-        setStreak(streakRes.streak);
-      }
-      setSupabaseSyncStatus('synced');
-      setSupabaseSyncMessage('បានធ្វើសមកាលកម្មជាមួយ Database ជោគជ័យ! ✅');
+      setSupabaseSyncMessage(`បរាជ័យក្នុងការ Sync៖ ${err?.message || 'Error'}`);
     }
   };
 
@@ -705,14 +857,14 @@ export default function App() {
           totalCompletedAllTime: prev.totalCompletedAllTime + 1,
         };
 
-        saveStreakToSupabase(newStreak).catch((err) =>
+        saveStreakToSupabase(newStreak, currentUser.id).catch((err) =>
           console.warn('Failed to sync streak to Supabase:', err)
         );
 
         return newStreak;
       });
     }
-  }, []);
+  }, [currentUser]);
 
   // Subtask completion toggle
   const handleToggleSubtask = (taskId: string, subtaskId: string) => {
@@ -744,18 +896,27 @@ export default function App() {
   // Add / Save Task
   const handleSaveTask = (savedTask: Task) => {
     soundFx.playClick();
+    const isRegular = currentUser.role === 'member' || currentUser.role === 'viewer';
+    const finalTask: Task = {
+      ...savedTask,
+      creatorId: savedTask.creatorId || currentUser.id,
+      creatorName: savedTask.creatorName || (currentUser.khmerName || currentUser.name),
+      assigneeId: savedTask.assigneeId || (isRegular ? currentUser.id : undefined),
+      assigneeName: savedTask.assigneeName || (isRegular ? (currentUser.khmerName || currentUser.name) : undefined),
+    };
+
     setTasks((prev) => {
-      const exists = prev.some((t) => t.id === savedTask.id);
+      const exists = prev.some((t) => t.id === finalTask.id);
       if (exists) {
-        logActivity('edit_task', savedTask.title, savedTask.assigneeName ? `ចាត់តាំងឱ្យ៖ ${savedTask.assigneeName}` : undefined);
-        return prev.map((t) => (t.id === savedTask.id ? savedTask : t));
+        logActivity('edit_task', finalTask.title, finalTask.assigneeName ? `ចាត់តាំងឱ្យ៖ ${finalTask.assigneeName}` : undefined);
+        return prev.map((t) => (t.id === finalTask.id ? finalTask : t));
       }
-      logActivity('create_task', savedTask.title, savedTask.assigneeName ? `ចាត់តាំងឱ្យ៖ ${savedTask.assigneeName}` : undefined);
-      return [savedTask, ...prev];
+      logActivity('create_task', finalTask.title, finalTask.assigneeName ? `ចាត់តាំងឱ្យ៖ ${finalTask.assigneeName}` : undefined);
+      return [finalTask, ...prev];
     });
 
     // Persist to Supabase
-    saveTaskToSupabase(savedTask).catch((err) =>
+    saveTaskToSupabase(finalTask).catch((err) =>
       console.warn('Failed to save task to Supabase:', err)
     );
   };
@@ -825,7 +986,7 @@ export default function App() {
         ...prev,
         totalFocusMinutesAllTime: prev.totalFocusMinutesAllTime + minutes,
       };
-      saveStreakToSupabase(updatedStreak).catch(() => {});
+      saveStreakToSupabase(updatedStreak, currentUser.id).catch(() => {});
       return updatedStreak;
     });
   };
@@ -1068,7 +1229,7 @@ export default function App() {
 
                 {/* Quick Add Bar */}
                 {filters.period === 'today' && canCreateTask && (
-                  <QuickAddBar onAddTask={handleSaveTask} />
+                  <QuickAddBar onAddTask={handleSaveTask} currentUser={currentUser} />
                 )}
 
                 {/* High Density Task Table / List */}
@@ -1158,6 +1319,8 @@ export default function App() {
         onDeleteUser={handleDeleteUser}
         onUpdateRolePermissions={handleUpdateRolePermissions}
         onSwitchUser={handleSwitchUser}
+        onManualSync={handleManualSync}
+        isSyncing={supabaseSyncStatus === 'syncing'}
       />
 
       {/* User Profile Modal (Avatar Customizer & Bio) */}
